@@ -6,6 +6,8 @@ import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
@@ -13,6 +15,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityCameraBinding
+import com.example.cameraxsample.storage.StorageModule
 import java.util.concurrent.ExecutionException
 
 class CameraActivity : AppCompatActivity() {
@@ -21,6 +24,7 @@ class CameraActivity : AppCompatActivity() {
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var previewUseCase: Preview? = null
+    private var imageCaptureUseCase: ImageCapture? = null
 
     private val displayManager by lazy { getSystemService(DisplayManager::class.java) }
 
@@ -33,6 +37,7 @@ class CameraActivity : AppCompatActivity() {
             val viewDisplay = binding.viewFinder.display ?: return
             if (displayId != viewDisplay.displayId) return
             previewUseCase?.targetRotation = viewDisplay.rotation
+            imageCaptureUseCase?.targetRotation = viewDisplay.rotation
         }
     }
 
@@ -67,8 +72,7 @@ class CameraActivity : AppCompatActivity() {
         }
 
         binding.btnShutter.setOnClickListener {
-            Log.d(TAG, "Shutter button tapped (placeholder)")
-            Toast.makeText(this, R.string.msg_shutter_placeholder, Toast.LENGTH_SHORT).show()
+            capturePhoto()
         }
 
         binding.btnClose.setOnClickListener {
@@ -91,7 +95,7 @@ class CameraActivity : AppCompatActivity() {
                 try {
                     val provider = cameraProviderFuture.get()
                     cameraProvider = provider
-                    bindPreviewUseCase(provider)
+                    bindCameraUseCases(provider)
                 } catch (securityException: SecurityException) {
                     Log.e(TAG, "Camera permission missing while launching preview", securityException)
                     Toast.makeText(this, R.string.camera_permission_required, Toast.LENGTH_SHORT).show()
@@ -109,16 +113,63 @@ class CameraActivity : AppCompatActivity() {
         )
     }
 
-    private fun bindPreviewUseCase(provider: ProcessCameraProvider) {
+    private fun bindCameraUseCases(provider: ProcessCameraProvider) {
         val viewDisplay = binding.viewFinder.display ?: return
+
         val preview = Preview.Builder()
             .setTargetRotation(viewDisplay.rotation)
             .build()
             .also { it.surfaceProvider = binding.viewFinder.surfaceProvider }
 
+        val imageCapture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setTargetRotation(viewDisplay.rotation)
+            .build()
+
         provider.unbindAll()
-        provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview)
+        provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
+
         previewUseCase = preview
+        imageCaptureUseCase = imageCapture
+    }
+
+    private fun capturePhoto() {
+        val imageCapture = imageCaptureUseCase ?: return
+        val saveRequest = StorageModule.createCaptureSaveRequest(this)
+
+        binding.btnShutter.isEnabled = false
+
+        imageCapture.takePicture(
+            saveRequest.outputOptions,
+            ContextCompat.getMainExecutor(this),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    binding.btnShutter.isEnabled = true
+                    val savedUri = outputFileResults.savedUri ?: saveRequest.legacyUri
+
+                    if (saveRequest.legacyFile != null) {
+                        StorageModule.scanLegacyFile(this@CameraActivity, saveRequest.legacyFile)
+                    }
+
+                    val locationMessage = savedUri?.toString() ?: saveRequest.userVisiblePath
+                    Toast.makeText(
+                        this@CameraActivity,
+                        getString(R.string.msg_photo_saved, locationMessage),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    binding.btnShutter.isEnabled = true
+                    Log.e(TAG, "Photo capture failed", exception)
+                    Toast.makeText(
+                        this@CameraActivity,
+                        R.string.msg_photo_save_failed,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        )
     }
 
     companion object {
