@@ -21,8 +21,8 @@
         android:layout_height="wrap_content"
         android:layout_marginStart="16dp"
         android:layout_marginTop="16dp"
-        android:text="⚡"
-        android:textSize="18sp"
+        android:contentDescription="@string/cd_flash_toggle"
+        app:icon="@drawable/ic_flash_off"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
