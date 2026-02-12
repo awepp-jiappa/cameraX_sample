@@ -40,13 +40,15 @@
 - [ ] 버튼 클릭 → CameraActivity 진입
 - [ ] (옵션) 권한이 없으면 Gate에서 먼저 권한 안내/요청
 
-### PR-3) Camera 화면 UI 뼈대 + 회전 대응
-- [ ] CameraActivity 생성
-- [ ] UI 배치 (PreviewView + 상단바 + 하단 촬영 버튼)
-- [ ] 회전 대응 방식 결정 (아래 2가지 중 1)
+### PR-3) Camera 화면 UI 뼈대 + Preview 연결 + 회전 대응
+- [x] CameraActivity 생성
+- [x] UI 배치 (PreviewView + 상단바 + 하단 촬영 버튼)
+- [x] 회전 대응 방식 결정 (아래 2가지 중 1)
   - A안(권장): `layout/` + `layout-land/` 각각 XML 제공
   - B안: ConstraintLayout 단일 + ConstraintSet 전환
-- [ ] 상태바/네비바 인셋 처리(겹침 방지)
+- [x] 상태바/네비바 인셋 처리(겹침 방지)
+- [x] `ProcessCameraProvider` + `PreviewView` 프리뷰 바인딩 (후면 카메라)
+- [x] 회전 시 `targetRotation` 업데이트
 
 ### PR-4) CameraX 프리뷰 붙이기
 - [ ] `ProcessCameraProvider` 초기화
