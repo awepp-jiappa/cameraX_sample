@@ -4,11 +4,15 @@ import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.util.Log
 import android.view.Display
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.Surface
+import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
@@ -20,12 +24,16 @@ import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityCameraBinding
 import com.example.cameraxsample.storage.StorageModule
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeUnit
+import kotlin.math.max
+import kotlin.math.min
 
 class CameraActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityCameraBinding
 
     private var cameraProvider: ProcessCameraProvider? = null
+    private var activeCamera: Camera? = null
     private var previewUseCase: Preview? = null
     private var imageCaptureUseCase: ImageCapture? = null
 
@@ -35,6 +43,10 @@ class CameraActivity : AppCompatActivity() {
     private var isCloseRequested: Boolean = false
     private var isDisplayListenerRegistered: Boolean = false
     private var lastControlRotationDegrees: Float = 0f
+    private var exposureIndex: Int = 0
+    private var isPinchGestureInProgress: Boolean = false
+
+    private lateinit var scaleGestureDetector: ScaleGestureDetector
 
     private val displayManager by lazy { getSystemService(DisplayManager::class.java) }
 
@@ -56,17 +68,21 @@ class CameraActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         flashMode = savedInstanceState?.getInt(KEY_FLASH_MODE) ?: ImageCapture.FLASH_MODE_OFF
+        exposureIndex = savedInstanceState?.getInt(KEY_EXPOSURE_INDEX) ?: 0
 
         setupInsets()
+        setupGestureDetectors()
         setupListeners()
         binding.btnFlash.isEnabled = false
         updateFlashButton()
+        updateExposureUi()
         setupCameraPreview()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putInt(KEY_FLASH_MODE, flashMode)
+        outState.putInt(KEY_EXPOSURE_INDEX, exposureIndex)
     }
 
     override fun onDestroy() {
@@ -94,6 +110,24 @@ class CameraActivity : AppCompatActivity() {
         }
     }
 
+    private fun setupGestureDetectors() {
+        scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                isPinchGestureInProgress = true
+                return true
+            }
+
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                applyPinchZoom(detector.scaleFactor)
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                isPinchGestureInProgress = false
+            }
+        })
+    }
+
     private fun setupListeners() {
         binding.btnFlash.setOnClickListener {
             if (!hasFlashUnit) return@setOnClickListener
@@ -109,6 +143,31 @@ class CameraActivity : AppCompatActivity() {
 
         binding.btnClose.setOnClickListener {
             onCloseClicked()
+        }
+
+        binding.btnExposureUp.setOnClickListener {
+            adjustExposureBy(1)
+        }
+
+        binding.btnExposureDown.setOnClickListener {
+            adjustExposureBy(-1)
+        }
+
+        binding.viewFinder.setOnTouchListener { _, event ->
+            scaleGestureDetector.onTouchEvent(event)
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_UP -> {
+                    if (!isPinchGestureInProgress && !scaleGestureDetector.isInProgress) {
+                        startFocusAndMeteringAt(event.x, event.y)
+                    }
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    isPinchGestureInProgress = false
+                }
+            }
+            true
         }
     }
 
@@ -183,6 +242,7 @@ class CameraActivity : AppCompatActivity() {
             )
             onCameraBound(camera)
 
+            activeCamera = camera
             previewUseCase = preview
             imageCaptureUseCase = imageCapture
             updateRotationTargets(viewDisplay.rotation)
@@ -204,6 +264,21 @@ class CameraActivity : AppCompatActivity() {
             flashMode = ImageCapture.FLASH_MODE_OFF
             Toast.makeText(this, R.string.msg_flash_not_supported, Toast.LENGTH_SHORT).show()
         }
+
+        val exposureState = camera.cameraInfo.exposureState
+        val exposureRange = exposureState.exposureCompensationRange
+        val isExposureSupported = exposureRange.lower != 0 || exposureRange.upper != 0
+        binding.exposureControls.visibility = if (isExposureSupported) View.VISIBLE else View.GONE
+
+        if (!isExposureSupported) {
+            Log.d(TAG, "Exposure compensation is not supported on this device")
+            exposureIndex = 0
+            return
+        }
+
+        exposureIndex = exposureIndex.coerceIn(exposureRange.lower, exposureRange.upper)
+        updateExposureUi()
+        setExposureIndex(exposureIndex)
     }
 
     private fun updateFlashButton() {
@@ -237,6 +312,7 @@ class CameraActivity : AppCompatActivity() {
     private fun releaseCameraResourcesSafely() {
         try {
             cameraProvider?.unbindAll()
+            activeCamera = null
             Log.d(TAG, "Camera resources unbound")
         } catch (exception: Exception) {
             Log.w(TAG, "Failed to unbind camera resources", exception)
@@ -297,6 +373,89 @@ class CameraActivity : AppCompatActivity() {
         }
     }
 
+    private fun applyPinchZoom(scaleFactor: Float) {
+        val camera = activeCamera ?: return
+        val zoomState = camera.cameraInfo.zoomState.value ?: return
+
+        val currentZoomRatio = zoomState.zoomRatio
+        val desiredRatio = (currentZoomRatio * scaleFactor)
+            .coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
+
+        camera.cameraControl.setZoomRatio(desiredRatio)
+        Log.d(TAG, "Zoom ratio changed: current=$currentZoomRatio desired=$desiredRatio")
+    }
+
+    private fun startFocusAndMeteringAt(x: Float, y: Float) {
+        val camera = activeCamera ?: run {
+            Log.d(TAG, "Ignoring focus tap: camera is not ready")
+            return
+        }
+
+        showFocusRing(x, y)
+
+        val meteringPoint = binding.viewFinder.meteringPointFactory.createPoint(x, y)
+        val action = FocusMeteringAction.Builder(meteringPoint)
+            .setAutoCancelDuration(3, TimeUnit.SECONDS)
+            .build()
+
+        val future = camera.cameraControl.startFocusAndMetering(action)
+        future.addListener(
+            {
+                try {
+                    val result = future.get()
+                    Log.d(TAG, "Focus and metering finished. Success=${result.isFocusSuccessful}")
+                } catch (exception: Exception) {
+                    Log.e(TAG, "Focus and metering failed", exception)
+                    Toast.makeText(this, R.string.msg_focus_metering_failed, Toast.LENGTH_SHORT).show()
+                }
+            },
+            ContextCompat.getMainExecutor(this)
+        )
+    }
+
+    private fun showFocusRing(x: Float, y: Float) {
+        binding.focusRing.apply {
+            visibility = View.VISIBLE
+            alpha = 1f
+            val clampedX = min(max(0f, x - width / 2f), binding.viewFinder.width - width.toFloat())
+            val clampedY = min(max(0f, y - height / 2f), binding.viewFinder.height - height.toFloat())
+            this.x = clampedX
+            this.y = clampedY
+            animate()
+                .alpha(0f)
+                .setDuration(600L)
+                .withEndAction { visibility = View.GONE }
+                .start()
+        }
+    }
+
+    private fun adjustExposureBy(delta: Int) {
+        val camera = activeCamera ?: return
+        val exposureRange = camera.cameraInfo.exposureState.exposureCompensationRange
+        if (exposureRange.lower == 0 && exposureRange.upper == 0) {
+            Toast.makeText(this, R.string.msg_exposure_not_supported, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val targetIndex = (exposureIndex + delta).coerceIn(exposureRange.lower, exposureRange.upper)
+        if (targetIndex == exposureIndex) return
+        setExposureIndex(targetIndex)
+    }
+
+    private fun setExposureIndex(targetIndex: Int) {
+        val camera = activeCamera ?: return
+        val exposureRange = camera.cameraInfo.exposureState.exposureCompensationRange
+        val clampedIndex = targetIndex.coerceIn(exposureRange.lower, exposureRange.upper)
+        camera.cameraControl.setExposureCompensationIndex(clampedIndex)
+        exposureIndex = clampedIndex
+        updateExposureUi()
+        Log.d(TAG, "Exposure compensation index changed: $exposureIndex")
+    }
+
+    private fun updateExposureUi() {
+        binding.tvExposureValue.text = exposureIndex.toString()
+    }
+
     private fun nextFlashMode(currentMode: Int): Int {
         return when (currentMode) {
             ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_ON
@@ -325,6 +484,8 @@ class CameraActivity : AppCompatActivity() {
         binding.btnFlash.animate().rotation(targetDegrees).setDuration(UI_ROTATION_ANIM_DURATION_MS).start()
         binding.btnClose.animate().rotation(targetDegrees).setDuration(UI_ROTATION_ANIM_DURATION_MS).start()
         binding.btnShutter.animate().rotation(targetDegrees).setDuration(UI_ROTATION_ANIM_DURATION_MS).start()
+        binding.btnExposureUp.animate().rotation(targetDegrees).setDuration(UI_ROTATION_ANIM_DURATION_MS).start()
+        binding.btnExposureDown.animate().rotation(targetDegrees).setDuration(UI_ROTATION_ANIM_DURATION_MS).start()
     }
 
     private fun getCurrentDisplayRotation(): Int {
@@ -346,6 +507,7 @@ class CameraActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "CameraActivity"
         private const val KEY_FLASH_MODE = "key_flash_mode"
+        private const val KEY_EXPOSURE_INDEX = "key_exposure_index"
         private const val UI_ROTATION_ANIM_DURATION_MS = 200L
     }
 }
