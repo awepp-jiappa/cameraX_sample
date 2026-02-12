@@ -51,11 +51,11 @@
 - [x] 회전 시 `targetRotation` 업데이트
 
 ### PR-4) CameraX 프리뷰 붙이기
-- [ ] `ProcessCameraProvider` 초기화
-- [ ] `Preview`를 `PreviewView`에 연결
-- [ ] 전/후면은 기본 후면(Back)으로 고정(필요 시 확장)
-- [ ] lifecycle 안전하게 bind/unbind 처리
-- [ ] 회전 시 `targetRotation` 업데이트
+- [x] `ProcessCameraProvider` 초기화
+- [x] `Preview`를 `PreviewView`에 연결
+- [x] 전/후면은 기본 후면(Back)으로 고정(필요 시 확장)
+- [x] lifecycle 안전하게 bind/unbind 처리
+- [x] 회전 시 `targetRotation` 업데이트
 
 ### PR-5) 촬영(ImageCapture) + 저장 로직(Downloads 하위)
 - [ ] 촬영 버튼 → 사진 촬영

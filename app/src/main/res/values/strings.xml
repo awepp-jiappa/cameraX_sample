@@ -5,10 +5,15 @@
     <string name="camera_permission_required">카메라 권한이 필요합니다.</string>
     <string name="camera_permission_rationale">사진을 촬영하려면 카메라 권한이 필요합니다. 권한을 허용해 주세요.</string>
     <string name="camera_permission_permanently_denied">카메라 권한이 영구적으로 거부되었습니다. 앱 설정에서 권한을 허용해 주세요.</string>
+    <string name="required_permissions_title">필수 권한 필요</string>
+    <string name="required_permissions_needed">카메라 사용을 위해 권한이 필요합니다.</string>
+    <string name="required_permissions_rationale">카메라 촬영과 저장을 위해 필수 권한을 허용해 주세요.</string>
+    <string name="required_permissions_permanently_denied">필수 권한이 영구적으로 거부되었습니다. 앱 설정에서 권한을 허용해 주세요.</string>
     <string name="retry_permission_request">다시 요청</string>
     <string name="open_settings">설정으로 이동</string>
     <string name="cancel">취소</string>
     <string name="msg_flash_placeholder">플래시 기능은 다음 PR에서 구현됩니다.</string>
-    <string name="msg_shutter_placeholder">촬영 기능은 다음 PR에서 구현됩니다.</string>
     <string name="msg_camera_init_failed">카메라 초기화에 실패했습니다.</string>
+    <string name="msg_photo_saved">사진이 저장되었습니다: %1$s</string>
+    <string name="msg_photo_save_failed">사진 저장에 실패했습니다.</string>
 </resources>
