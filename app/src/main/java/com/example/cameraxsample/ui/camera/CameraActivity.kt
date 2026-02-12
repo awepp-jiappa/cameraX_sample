@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -26,6 +27,11 @@ class CameraActivity : AppCompatActivity() {
     private var previewUseCase: Preview? = null
     private var imageCaptureUseCase: ImageCapture? = null
 
+    private var flashMode: Int = ImageCapture.FLASH_MODE_OFF
+    private var hasFlashUnit: Boolean = false
+    private var isCaptureInProgress: Boolean = false
+    private var isCloseRequested: Boolean = false
+
     private val displayManager by lazy { getSystemService(DisplayManager::class.java) }
 
     private val displayListener = object : DisplayManager.DisplayListener {
@@ -46,14 +52,23 @@ class CameraActivity : AppCompatActivity() {
         binding = ActivityCameraBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        flashMode = savedInstanceState?.getInt(KEY_FLASH_MODE) ?: ImageCapture.FLASH_MODE_OFF
+
         setupInsets()
         setupListeners()
+        binding.btnFlash.isEnabled = false
+        updateFlashButton()
         setupCameraPreview()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(KEY_FLASH_MODE, flashMode)
     }
 
     override fun onDestroy() {
         displayManager.unregisterDisplayListener(displayListener)
-        cameraProvider?.unbindAll()
+        releaseCameraResourcesSafely()
         super.onDestroy()
     }
 
@@ -67,8 +82,11 @@ class CameraActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         binding.btnFlash.setOnClickListener {
-            Log.d(TAG, "Flash button tapped (placeholder)")
-            Toast.makeText(this, R.string.msg_flash_placeholder, Toast.LENGTH_SHORT).show()
+            if (!hasFlashUnit) return@setOnClickListener
+            flashMode = nextFlashMode(flashMode)
+            imageCaptureUseCase?.flashMode = flashMode
+            Log.d(TAG, "Flash mode changed: ${flashModeToText(flashMode)}")
+            updateFlashButton()
         }
 
         binding.btnShutter.setOnClickListener {
@@ -76,7 +94,7 @@ class CameraActivity : AppCompatActivity() {
         }
 
         binding.btnClose.setOnClickListener {
-            finish()
+            onCloseClicked()
         }
     }
 
@@ -103,10 +121,12 @@ class CameraActivity : AppCompatActivity() {
                 } catch (executionException: ExecutionException) {
                     Log.e(TAG, "Failed to initialize camera provider", executionException)
                     Toast.makeText(this, R.string.msg_camera_init_failed, Toast.LENGTH_SHORT).show()
+                    finish()
                 } catch (interruptedException: InterruptedException) {
                     Thread.currentThread().interrupt()
                     Log.e(TAG, "Camera provider initialization interrupted", interruptedException)
                     Toast.makeText(this, R.string.msg_camera_init_failed, Toast.LENGTH_SHORT).show()
+                    finish()
                 }
             },
             ContextCompat.getMainExecutor(this)
@@ -116,6 +136,8 @@ class CameraActivity : AppCompatActivity() {
     private fun bindCameraUseCases(provider: ProcessCameraProvider) {
         val viewDisplay = binding.viewFinder.display ?: return
 
+        Log.d(TAG, "Binding camera use cases")
+
         val preview = Preview.Builder()
             .setTargetRotation(viewDisplay.rotation)
             .build()
@@ -124,19 +146,83 @@ class CameraActivity : AppCompatActivity() {
         val imageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setTargetRotation(viewDisplay.rotation)
+            .setFlashMode(flashMode)
             .build()
 
-        provider.unbindAll()
-        provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
+        try {
+            provider.unbindAll()
+            val camera = provider.bindToLifecycle(
+                this,
+                CameraSelector.DEFAULT_BACK_CAMERA,
+                preview,
+                imageCapture
+            )
+            onCameraBound(camera)
 
-        previewUseCase = preview
-        imageCaptureUseCase = imageCapture
+            previewUseCase = preview
+            imageCaptureUseCase = imageCapture
+            updateFlashButton()
+            Log.d(TAG, "Camera use cases bound successfully")
+        } catch (exception: Exception) {
+            Log.e(TAG, "Failed to bind camera use cases", exception)
+            Toast.makeText(this, R.string.msg_camera_init_failed, Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    private fun onCameraBound(camera: Camera) {
+        hasFlashUnit = camera.cameraInfo.hasFlashUnit()
+        Log.d(TAG, "Camera flash support: $hasFlashUnit")
+
+        binding.btnFlash.isEnabled = hasFlashUnit
+        if (!hasFlashUnit) {
+            flashMode = ImageCapture.FLASH_MODE_OFF
+            Toast.makeText(this, R.string.msg_flash_not_supported, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun updateFlashButton() {
+        val iconRes = when (flashMode) {
+            ImageCapture.FLASH_MODE_ON -> R.drawable.ic_flash_on
+            ImageCapture.FLASH_MODE_AUTO -> R.drawable.ic_flash_auto
+            else -> R.drawable.ic_flash_off
+        }
+        binding.btnFlash.setIconResource(iconRes)
+    }
+
+    private fun onCloseClicked() {
+        if (isCloseRequested) return
+
+        isCloseRequested = true
+        binding.btnClose.isEnabled = false
+        Log.d(TAG, "Close button tapped. inProgress=$isCaptureInProgress")
+
+        if (isCaptureInProgress) {
+            return
+        }
+
+        closeAndFinish()
+    }
+
+    private fun closeAndFinish() {
+        releaseCameraResourcesSafely()
+        finish()
+    }
+
+    private fun releaseCameraResourcesSafely() {
+        try {
+            cameraProvider?.unbindAll()
+            Log.d(TAG, "Camera resources unbound")
+        } catch (exception: Exception) {
+            Log.w(TAG, "Failed to unbind camera resources", exception)
+        }
     }
 
     private fun capturePhoto() {
         val imageCapture = imageCaptureUseCase ?: return
         val saveRequest = StorageModule.createCaptureSaveRequest(this)
 
+        isCaptureInProgress = true
         binding.btnShutter.isEnabled = false
 
         imageCapture.takePicture(
@@ -144,7 +230,9 @@ class CameraActivity : AppCompatActivity() {
             ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    binding.btnShutter.isEnabled = true
+                    onCaptureFinished()
+                    if (isDestroyed || isFinishing) return
+
                     val savedUri = outputFileResults.savedUri ?: saveRequest.legacyUri
 
                     if (saveRequest.legacyFile != null) {
@@ -160,7 +248,9 @@ class CameraActivity : AppCompatActivity() {
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    binding.btnShutter.isEnabled = true
+                    onCaptureFinished()
+                    if (isDestroyed || isFinishing) return
+
                     Log.e(TAG, "Photo capture failed", exception)
                     Toast.makeText(
                         this@CameraActivity,
@@ -172,7 +262,35 @@ class CameraActivity : AppCompatActivity() {
         )
     }
 
+    private fun onCaptureFinished() {
+        isCaptureInProgress = false
+        if (!isDestroyed) {
+            binding.btnShutter.isEnabled = true
+        }
+        if (isCloseRequested) {
+            closeAndFinish()
+        }
+    }
+
+    private fun nextFlashMode(currentMode: Int): Int {
+        return when (currentMode) {
+            ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_ON
+            ImageCapture.FLASH_MODE_ON -> ImageCapture.FLASH_MODE_AUTO
+            else -> ImageCapture.FLASH_MODE_OFF
+        }
+    }
+
+    private fun flashModeToText(mode: Int): String {
+        return when (mode) {
+            ImageCapture.FLASH_MODE_OFF -> "OFF"
+            ImageCapture.FLASH_MODE_ON -> "ON"
+            ImageCapture.FLASH_MODE_AUTO -> "AUTO"
+            else -> "UNKNOWN"
+        }
+    }
+
     companion object {
         private const val TAG = "CameraActivity"
+        private const val KEY_FLASH_MODE = "key_flash_mode"
     }
 }

@@ -57,17 +57,12 @@
 - [x] lifecycle 안전하게 bind/unbind 처리
 - [x] 회전 시 `targetRotation` 업데이트
 
-### PR-5) 촬영(ImageCapture) + 저장 로직(Downloads 하위)
-- [ ] 촬영 버튼 → 사진 촬영
-- [ ] 저장 경로: `Download/codex_app/cameraX`
-- [ ] 파일명 규칙: `IMG_yyyyMMdd_HHmmss.jpg`
-- [ ] Android 10+(Q) 이상:
-  - MediaStore(Downloads) 사용
-  - `RELATIVE_PATH = "Download/codex_app/cameraX"`
-- [ ] Android 9 이하:
-  - `Environment.getExternalStoragePublicDirectory(DIRECTORY_DOWNLOADS)` 하위 폴더 생성
-  - 필요 권한 처리(WRITE_EXTERNAL_STORAGE)
-- [ ] 촬영 성공/실패 Toast 또는 스낵바
+### PR-5) 플래시 토글 + 닫기 안정화
+- [x] 플래시 아이콘 탭 시 모드 순환 (`OFF → ON → AUTO`)
+- [x] `ImageCapture.flashMode` 반영 + 아이콘 즉시 갱신
+- [x] 기기 플래시 지원 여부 체크(미지원 시 버튼 비활성)
+- [x] 닫기(X) 시 중복 탭 방지 + `unbindAll()` 후 종료
+- [x] 촬영 중 빠른 닫기 시 콜백/종료 경합으로 인한 크래시 방지
 
 ### PR-6) 플래시 토글 동작
 - [ ] 플래시 아이콘 탭 시 모드 순환

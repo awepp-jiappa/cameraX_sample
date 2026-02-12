@@ -12,7 +12,8 @@
     <string name="retry_permission_request">다시 요청</string>
     <string name="open_settings">설정으로 이동</string>
     <string name="cancel">취소</string>
-    <string name="msg_flash_placeholder">플래시 기능은 다음 PR에서 구현됩니다.</string>
+    <string name="cd_flash_toggle">플래시 모드 전환</string>
+    <string name="msg_flash_not_supported">이 기기는 플래시를 지원하지 않습니다.</string>
     <string name="msg_camera_init_failed">카메라 초기화에 실패했습니다.</string>
     <string name="msg_photo_saved">사진이 저장되었습니다: %1$s</string>
     <string name="msg_photo_save_failed">사진 저장에 실패했습니다.</string>
