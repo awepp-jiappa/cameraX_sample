@@ -3,6 +3,8 @@ package com.example.cameraxsample.ui.camera
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.util.Log
+import android.view.Display
+import android.view.Surface
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.Camera
@@ -31,6 +33,8 @@ class CameraActivity : AppCompatActivity() {
     private var hasFlashUnit: Boolean = false
     private var isCaptureInProgress: Boolean = false
     private var isCloseRequested: Boolean = false
+    private var isDisplayListenerRegistered: Boolean = false
+    private var lastControlRotationDegrees: Float = 0f
 
     private val displayManager by lazy { getSystemService(DisplayManager::class.java) }
 
@@ -42,8 +46,7 @@ class CameraActivity : AppCompatActivity() {
         override fun onDisplayChanged(displayId: Int) {
             val viewDisplay = binding.viewFinder.display ?: return
             if (displayId != viewDisplay.displayId) return
-            previewUseCase?.targetRotation = viewDisplay.rotation
-            imageCaptureUseCase?.targetRotation = viewDisplay.rotation
+            updateRotationTargets(viewDisplay.rotation)
         }
     }
 
@@ -67,9 +70,20 @@ class CameraActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        displayManager.unregisterDisplayListener(displayListener)
+        unregisterDisplayListener()
         releaseCameraResourcesSafely()
         super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        registerDisplayListener()
+        updateRotationTargets(getCurrentDisplayRotation())
+    }
+
+    override fun onPause() {
+        unregisterDisplayListener()
+        super.onPause()
     }
 
     private fun setupInsets() {
@@ -99,11 +113,21 @@ class CameraActivity : AppCompatActivity() {
     }
 
     private fun setupCameraPreview() {
-        displayManager.registerDisplayListener(displayListener, null)
-
         binding.viewFinder.post {
             startCameraPreview()
         }
+    }
+
+    private fun registerDisplayListener() {
+        if (isDisplayListenerRegistered) return
+        displayManager.registerDisplayListener(displayListener, null)
+        isDisplayListenerRegistered = true
+    }
+
+    private fun unregisterDisplayListener() {
+        if (!isDisplayListenerRegistered) return
+        displayManager.unregisterDisplayListener(displayListener)
+        isDisplayListenerRegistered = false
     }
 
     private fun startCameraPreview() {
@@ -161,6 +185,7 @@ class CameraActivity : AppCompatActivity() {
 
             previewUseCase = preview
             imageCaptureUseCase = imageCapture
+            updateRotationTargets(viewDisplay.rotation)
             updateFlashButton()
             Log.d(TAG, "Camera use cases bound successfully")
         } catch (exception: Exception) {
@@ -289,8 +314,38 @@ class CameraActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateRotationTargets(displayRotation: Int) {
+        previewUseCase?.targetRotation = displayRotation
+        imageCaptureUseCase?.targetRotation = displayRotation
+
+        val targetDegrees = mapDisplayRotationToDegrees(displayRotation)
+        if (targetDegrees == lastControlRotationDegrees) return
+
+        lastControlRotationDegrees = targetDegrees
+        binding.btnFlash.animate().rotation(targetDegrees).setDuration(UI_ROTATION_ANIM_DURATION_MS).start()
+        binding.btnClose.animate().rotation(targetDegrees).setDuration(UI_ROTATION_ANIM_DURATION_MS).start()
+        binding.btnShutter.animate().rotation(targetDegrees).setDuration(UI_ROTATION_ANIM_DURATION_MS).start()
+    }
+
+    private fun getCurrentDisplayRotation(): Int {
+        return binding.viewFinder.display?.rotation
+            ?: displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.rotation
+            ?: Surface.ROTATION_0
+    }
+
+    private fun mapDisplayRotationToDegrees(displayRotation: Int): Float {
+        return when (displayRotation) {
+            Surface.ROTATION_0 -> 0f
+            Surface.ROTATION_90 -> 90f
+            Surface.ROTATION_180 -> 180f
+            Surface.ROTATION_270 -> 270f
+            else -> 0f
+        }
+    }
+
     companion object {
         private const val TAG = "CameraActivity"
         private const val KEY_FLASH_MODE = "key_flash_mode"
+        private const val UI_ROTATION_ANIM_DURATION_MS = 200L
     }
 }
