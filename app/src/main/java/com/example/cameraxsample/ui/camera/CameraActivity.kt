@@ -478,6 +478,7 @@ class CameraActivity : AppCompatActivity() {
         imageCaptureUseCase?.targetRotation = displayRotation
 
         val targetDegrees = mapDisplayRotationToDegrees(displayRotation)
+        binding.tvRotation.text = "${targetDegrees.toInt()}°"
         if (targetDegrees == lastControlRotationDegrees) return
 
         lastControlRotationDegrees = targetDegrees
