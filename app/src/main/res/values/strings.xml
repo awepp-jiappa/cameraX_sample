@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">CameraX Sample</string>
+    <string name="take_photo">사진찍기</string>
+    <string name="msg_flash_placeholder">플래시 기능은 다음 PR에서 구현됩니다.</string>
+    <string name="msg_shutter_placeholder">촬영 기능은 다음 PR에서 구현됩니다.</string>
+</resources>
