@@ -13,6 +13,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CameraXSample">
         <activity
+            android:name=".ui.saved.SavedImageActivity"
+            android:exported="false" />
+        <activity
             android:name=".ui.preview.PreviewActivity"
             android:exported="false" />
         <activity
