@@ -21,4 +21,8 @@
     <string name="cd_exposure_down">노출 감소</string>
     <string name="msg_focus_metering_failed">초점 맞추기에 실패했습니다.</string>
     <string name="msg_exposure_not_supported">이 기기는 노출 보정을 지원하지 않습니다.</string>
+    <string name="preview_save">저장</string>
+    <string name="preview_discard">삭제</string>
+    <string name="preview_image">촬영 미리보기</string>
+    <string name="msg_save_completed">저장 완료</string>
 </resources>
