@@ -1,6 +1,8 @@
 package com.example.cameraxsample.ui.camera
 
 import android.hardware.display.DisplayManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.Display
@@ -23,6 +25,8 @@ import androidx.core.view.WindowInsetsCompat
 import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityCameraBinding
 import com.example.cameraxsample.storage.StorageModule
+import com.example.cameraxsample.ui.preview.PreviewActivity
+import java.io.File
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
@@ -321,35 +325,37 @@ class CameraActivity : AppCompatActivity() {
 
     private fun capturePhoto() {
         val imageCapture = imageCaptureUseCase ?: return
-        val saveRequest = StorageModule.createCaptureSaveRequest(this)
+        val tempRequest = try {
+            StorageModule.createTemporaryCaptureRequest(this)
+        } catch (exception: Exception) {
+            Log.e(TAG, "Failed to prepare temporary capture request", exception)
+            Toast.makeText(this, R.string.msg_photo_save_failed, Toast.LENGTH_SHORT).show()
+            return
+        }
 
         isCaptureInProgress = true
         binding.btnShutter.isEnabled = false
 
         imageCapture.takePicture(
-            saveRequest.outputOptions,
+            tempRequest.outputOptions,
             ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     onCaptureFinished()
                     if (isDestroyed || isFinishing) return
 
-                    val savedUri = outputFileResults.savedUri ?: saveRequest.legacyUri
-
-                    if (saveRequest.legacyFile != null) {
-                        StorageModule.scanLegacyFile(this@CameraActivity, saveRequest.legacyFile)
-                    }
-
-                    val locationMessage = savedUri?.toString() ?: saveRequest.userVisiblePath
-                    Toast.makeText(
-                        this@CameraActivity,
-                        getString(R.string.msg_photo_saved, locationMessage),
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    val tempUri = outputFileResults.savedUri ?: tempRequest.tempUri
+                    Log.d(TAG, "Temporary capture saved. uri=$tempUri file=${tempRequest.tempFile?.absolutePath}")
+                    launchPreview(tempUri, tempRequest.tempFile, tempRequest.fileName)
                 }
 
                 override fun onError(exception: ImageCaptureException) {
                     onCaptureFinished()
+                    StorageModule.discardTemporaryCapture(
+                        context = this@CameraActivity,
+                        uri = tempRequest.tempUri,
+                        file = tempRequest.tempFile,
+                    )
                     if (isDestroyed || isFinishing) return
 
                     Log.e(TAG, "Photo capture failed", exception)
@@ -361,6 +367,15 @@ class CameraActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    private fun launchPreview(tempUri: Uri?, tempFile: File?, fileName: String) {
+        val intent = Intent(this, PreviewActivity::class.java).apply {
+            putExtra(PreviewActivity.EXTRA_FILE_NAME, fileName)
+            tempUri?.let { putExtra(PreviewActivity.EXTRA_TEMP_URI, it.toString()) }
+            tempFile?.let { putExtra(PreviewActivity.EXTRA_TEMP_FILE_PATH, it.absolutePath) }
+        }
+        startActivity(intent)
     }
 
     private fun onCaptureFinished() {

@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityGateBinding
+import com.example.cameraxsample.storage.StorageModule
 import com.example.cameraxsample.ui.camera.CameraActivity
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
@@ -34,6 +35,8 @@ class GateActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityGateBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        StorageModule.cleanupPendingCaptures(this)
 
         binding.btnTakePhoto.setOnClickListener {
             if (hasRequiredPermissions()) {
