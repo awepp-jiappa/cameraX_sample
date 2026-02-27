@@ -3,6 +3,7 @@ package com.example.cameraxsample.ui.camera
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.hardware.display.DisplayManager
@@ -34,6 +35,7 @@ import com.example.cameraxsample.ui.preview.PreviewActivity
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -398,22 +400,43 @@ class CameraActivity : AppCompatActivity() {
     }
 
     private fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
-        val nv21 = yuv420ToNv21(image)
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
-        val out = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 95, out)
-        val imageBytes = out.toByteArray()
-        var bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size) ?: return null
+        val rawBitmap = when (image.format) {
+            ImageFormat.JPEG -> {
+                val jpegPlane = image.planes.firstOrNull() ?: return null
+                val bytes = byteBufferToByteArray(jpegPlane.buffer)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+
+            ImageFormat.YUV_420_888 -> {
+                val nv21 = yuv420ToNv21Safe(image) ?: return null
+                val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+                val out = ByteArrayOutputStream()
+                yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 95, out)
+                val imageBytes = out.toByteArray()
+                BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+            }
+
+            else -> {
+                Log.w(TAG, "Unsupported image format=${image.format}")
+                null
+            }
+        } ?: return null
 
         val rotationDegrees = image.imageInfo.rotationDegrees
-        if (rotationDegrees != 0) {
-            val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        if (rotationDegrees == 0) {
+            return rawBitmap
         }
-        return bitmap
+
+        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        return Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
     }
 
-    private fun yuv420ToNv21(image: ImageProxy): ByteArray {
+    private fun yuv420ToNv21Safe(image: ImageProxy): ByteArray? {
+        if (image.planes.size < 3) {
+            Log.w(TAG, "YUV image does not contain 3 planes. planeCount=${image.planes.size}")
+            return null
+        }
+
         val width = image.width
         val height = image.height
         val ySize = width * height
@@ -431,7 +454,12 @@ class CameraActivity : AppCompatActivity() {
         for (row in 0 until height) {
             val rowStart = row * yRowStride
             for (col in 0 until width) {
-                nv21[outputOffset++] = yBuffer[rowStart + col * yPixelStride]
+                val yIndex = rowStart + col * yPixelStride
+                if (yIndex >= yBuffer.limit()) {
+                    Log.w(TAG, "Out-of-bounds in Y plane: index=$yIndex limit=${yBuffer.limit()}")
+                    return null
+                }
+                nv21[outputOffset++] = yBuffer.get(yIndex)
             }
         }
 
@@ -448,12 +476,29 @@ class CameraActivity : AppCompatActivity() {
             val uRowStart = row * uRowStride
             val vRowStart = row * vRowStride
             for (col in 0 until chromaWidth) {
-                nv21[outputOffset++] = vBuffer[vRowStart + col * vPixelStride]
-                nv21[outputOffset++] = uBuffer[uRowStart + col * uPixelStride]
+                val vIndex = vRowStart + col * vPixelStride
+                val uIndex = uRowStart + col * uPixelStride
+
+                if (vIndex >= vBuffer.limit() || uIndex >= uBuffer.limit()) {
+                    Log.w(
+                        TAG,
+                        "Out-of-bounds in UV plane: vIndex=$vIndex vLimit=${vBuffer.limit()} uIndex=$uIndex uLimit=${uBuffer.limit()}"
+                    )
+                    return null
+                }
+
+                nv21[outputOffset++] = vBuffer.get(vIndex)
+                nv21[outputOffset++] = uBuffer.get(uIndex)
             }
         }
 
         return nv21
+    }
+
+    private fun byteBufferToByteArray(buffer: ByteBuffer): ByteArray {
+        val duplicate = buffer.duplicate()
+        duplicate.rewind()
+        return ByteArray(duplicate.remaining()).also { duplicate.get(it) }
     }
 
     private fun launchPreview(tempFile: File, fileName: String) {
