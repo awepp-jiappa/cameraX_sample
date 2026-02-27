@@ -1,8 +1,6 @@
 package com.example.cameraxsample.ui.preview
 
 import android.content.Intent
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
@@ -18,21 +16,20 @@ class PreviewActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityPreviewBinding
 
-    private var tempUri: Uri? = null
     private var tempFilePath: String? = null
     private var fileName: String = ""
     private var actionHandled: Boolean = false
+    private var saved: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityPreviewBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        tempUri = intent.getStringExtra(EXTRA_TEMP_URI)?.let(Uri::parse)
         tempFilePath = intent.getStringExtra(EXTRA_TEMP_FILE_PATH)
         fileName = intent.getStringExtra(EXTRA_FILE_NAME).orEmpty()
 
-        if (tempUri == null && tempFilePath.isNullOrBlank()) {
+        if (tempFilePath.isNullOrBlank()) {
             Log.e(TAG, "PreviewActivity launched without temp source")
             finish()
             return
@@ -46,6 +43,9 @@ class PreviewActivity : AppCompatActivity() {
         super.onDestroy()
         if (!isChangingConfigurations) {
             Glide.with(this).clear(binding.ivPreview)
+            if (!saved) {
+                deleteTempFileIfExists()
+            }
         }
     }
 
@@ -56,7 +56,7 @@ class PreviewActivity : AppCompatActivity() {
     }
 
     private fun loadPreviewImage() {
-        val source = tempUri ?: File(tempFilePath.orEmpty())
+        val source = File(tempFilePath.orEmpty())
         Glide.with(this)
             .load(source)
             .fitCenter()
@@ -67,79 +67,50 @@ class PreviewActivity : AppCompatActivity() {
         if (actionHandled) return
         actionHandled = true
 
-        var savedUri: Uri? = null
-        var savedFilePath: String? = null
-
-        val saved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val uri = tempUri
-            if (uri == null) {
-                false
-            } else {
-                val committed = StorageModule.commitPendingCapture(this, uri)
-                if (committed) {
-                    savedUri = uri
-                }
-                committed
-            }
-        } else {
-            val path = tempFilePath
-            val tempFile = if (path.isNullOrBlank()) null else File(path)
-            if (tempFile == null || !tempFile.exists()) {
-                false
-            } else {
-                val destination = StorageModule.saveLegacyTempCapture(this, tempFile, fileName)
-                if (destination != null) {
-                    savedFilePath = destination.absolutePath
-                }
-                destination != null
-            }
-        }
-
-        if (!saved) {
+        val tempFile = tempFilePath?.let(::File)
+        if (tempFile == null || !tempFile.exists()) {
             actionHandled = false
             Toast.makeText(this, R.string.msg_photo_save_failed, Toast.LENGTH_SHORT).show()
             return
         }
 
-        cleanupLegacyTempAfterSave()
+        val result = StorageModule.saveCapturedPhoto(this, tempFile, fileName)
+        if (result == null) {
+            actionHandled = false
+            Toast.makeText(this, R.string.msg_photo_save_failed, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        saved = true
+        StorageModule.deleteTempCapture(tempFile)
         Toast.makeText(this, R.string.msg_save_completed, Toast.LENGTH_SHORT).show()
-        Log.d(TAG, "Save completed. savedUri=$savedUri savedFilePath=$savedFilePath")
+        Log.d(TAG, "Save completed. savedUri=${result.savedUri} savedFilePath=${result.savedFilePath}")
 
         val intent = Intent(this, SavedImageActivity::class.java).apply {
-            putExtra(SavedImageActivity.EXTRA_SAVED_URI, savedUri?.toString())
-            putExtra(SavedImageActivity.EXTRA_SAVED_FILE_PATH, savedFilePath)
+            putExtra(SavedImageActivity.EXTRA_SAVED_URI, result.savedUri?.toString())
+            putExtra(SavedImageActivity.EXTRA_SAVED_FILE_PATH, result.savedFilePath)
         }
         startActivity(intent)
         finish()
-    }
-
-    private fun cleanupLegacyTempAfterSave() {
-        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) return
-        val path = tempFilePath ?: return
-        val tempFile = File(path)
-        if (!tempFile.exists()) return
-
-        val deleted = tempFile.delete()
-        Log.d(TAG, "Legacy temp cleanup after save path=$path deleted=$deleted")
     }
 
     private fun onDiscardClicked() {
         if (actionHandled) return
         actionHandled = true
 
-        val discarded = StorageModule.discardTemporaryCapture(
-            context = this,
-            uri = tempUri,
-            file = tempFilePath?.let(::File),
-        )
-        Log.d(TAG, "Discard clicked. discarded=$discarded uri=$tempUri path=$tempFilePath")
+        val deleted = deleteTempFileIfExists()
+        Log.d(TAG, "Discard clicked. deleted=$deleted path=$tempFilePath")
         finish()
+    }
+
+    private fun deleteTempFileIfExists(): Boolean {
+        val tempFile = tempFilePath?.let(::File)
+        return StorageModule.deleteTempCapture(tempFile)
     }
 
     companion object {
         private const val TAG = "PreviewActivity"
 
-        const val EXTRA_TEMP_URI = "extra_temp_uri"
         const val EXTRA_TEMP_FILE_PATH = "extra_temp_file_path"
         const val EXTRA_FILE_NAME = "extra_file_name"
     }

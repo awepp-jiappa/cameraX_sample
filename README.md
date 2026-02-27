@@ -7,7 +7,7 @@
   - 상단 우측: 닫기(X) 버튼
   - 하단 중앙: 촬영 버튼
 - 기기 회전(세로/가로/태블릿) 시 UI가 자연스럽게 대응
-- 촬영 후 저장 경로: `/sdcard/Download/codex_app/cameraX`
+- 촬영 후 흐름: 캡처 → 미리보기(캐시) → 저장 확정 시 `/sdcard/Download/codex_app/cameraX`
 
 ---
 
@@ -98,6 +98,13 @@
 - [x] 대용량 이미지 안전 로딩(OOM 방지) 적용
 - [x] 저장 이미지 로드 실패 시 토스트 표시 후 안전 종료
 - [x] "카메라로 돌아가기"/닫기 시 Camera 화면으로 복귀
+
+### PR-11) 촬영-미리보기-확정 저장 플로우
+- [x] 셔터 클릭 시 메모리 캡처 후 cache 임시 파일로 미리보기 이동
+- [x] 미리보기에서 "저장" 누를 때만 Downloads(codex_app/cameraX)로 최종 저장
+- [x] "삭제"/닫기/액티비티 종료 시 cache 임시 파일 즉시 정리
+- [x] ImageProxy 변환/close 보장으로 메모리 누수 방지
+- [x] Android 10+ MediaStore, Android 9 이하 Downloads 저장 분기 유지
 
 ---
 

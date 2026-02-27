@@ -1,8 +1,12 @@
 package com.example.cameraxsample.ui.camera
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.hardware.display.DisplayManager
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.Display
@@ -17,6 +21,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
@@ -26,8 +31,11 @@ import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityCameraBinding
 import com.example.cameraxsample.storage.StorageModule
 import com.example.cameraxsample.ui.preview.PreviewActivity
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
@@ -51,6 +59,7 @@ class CameraActivity : AppCompatActivity() {
     private var isPinchGestureInProgress: Boolean = false
 
     private lateinit var scaleGestureDetector: ScaleGestureDetector
+    private val captureExecutor = Executors.newSingleThreadExecutor()
 
     private val displayManager by lazy { getSystemService(DisplayManager::class.java) }
 
@@ -70,6 +79,8 @@ class CameraActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityCameraBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        StorageModule.cleanupTemporaryCaptures(this)
 
         flashMode = savedInstanceState?.getInt(KEY_FLASH_MODE) ?: ImageCapture.FLASH_MODE_OFF
         exposureIndex = savedInstanceState?.getInt(KEY_EXPOSURE_INDEX) ?: 0
@@ -92,6 +103,7 @@ class CameraActivity : AppCompatActivity() {
     override fun onDestroy() {
         unregisterDisplayListener()
         releaseCameraResourcesSafely()
+        captureExecutor.shutdown()
         super.onDestroy()
     }
 
@@ -325,55 +337,129 @@ class CameraActivity : AppCompatActivity() {
 
     private fun capturePhoto() {
         val imageCapture = imageCaptureUseCase ?: return
-        val tempRequest = try {
-            StorageModule.createTemporaryCaptureRequest(this)
-        } catch (exception: Exception) {
-            Log.e(TAG, "Failed to prepare temporary capture request", exception)
-            Toast.makeText(this, R.string.msg_photo_save_failed, Toast.LENGTH_SHORT).show()
-            return
-        }
 
         isCaptureInProgress = true
         binding.btnShutter.isEnabled = false
 
         imageCapture.takePicture(
-            tempRequest.outputOptions,
-            ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    onCaptureFinished()
-                    if (isDestroyed || isFinishing) return
+            captureExecutor,
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    val tempFile = processCapturedImage(image)
+                    runOnUiThread {
+                        onCaptureFinished()
+                        if (isDestroyed || isFinishing) return@runOnUiThread
 
-                    val tempUri = outputFileResults.savedUri ?: tempRequest.tempUri
-                    Log.d(TAG, "Temporary capture saved. uri=$tempUri file=${tempRequest.tempFile?.absolutePath}")
-                    launchPreview(tempUri, tempRequest.tempFile, tempRequest.fileName)
+                        if (tempFile == null) {
+                            Toast.makeText(
+                                this@CameraActivity,
+                                R.string.msg_photo_save_failed,
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            return@runOnUiThread
+                        }
+
+                        launchPreview(tempFile, StorageModule.createPhotoFileName())
+                    }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    onCaptureFinished()
-                    StorageModule.discardTemporaryCapture(
-                        context = this@CameraActivity,
-                        uri = tempRequest.tempUri,
-                        file = tempRequest.tempFile,
-                    )
-                    if (isDestroyed || isFinishing) return
+                    runOnUiThread {
+                        onCaptureFinished()
+                        if (isDestroyed || isFinishing) return@runOnUiThread
 
-                    Log.e(TAG, "Photo capture failed", exception)
-                    Toast.makeText(
-                        this@CameraActivity,
-                        R.string.msg_photo_save_failed,
-                        Toast.LENGTH_SHORT
-                    ).show()
+                        Log.e(TAG, "Photo capture failed", exception)
+                        Toast.makeText(
+                            this@CameraActivity,
+                            R.string.msg_photo_save_failed,
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 }
             }
         )
     }
 
-    private fun launchPreview(tempUri: Uri?, tempFile: File?, fileName: String) {
+    private fun processCapturedImage(image: ImageProxy): File? {
+        return try {
+            val bitmap = imageProxyToBitmap(image) ?: return null
+            val fileName = "TMP_${System.currentTimeMillis()}.jpg"
+            val tempFile = StorageModule.createTemporaryCaptureFile(this, fileName)
+            FileOutputStream(tempFile).use { output ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)
+            }
+            tempFile
+        } catch (exception: Exception) {
+            Log.e(TAG, "Failed to process captured image", exception)
+            null
+        } finally {
+            image.close()
+        }
+    }
+
+    private fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
+        val nv21 = yuv420ToNv21(image)
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+        val out = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 95, out)
+        val imageBytes = out.toByteArray()
+        var bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size) ?: return null
+
+        val rotationDegrees = image.imageInfo.rotationDegrees
+        if (rotationDegrees != 0) {
+            val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        }
+        return bitmap
+    }
+
+    private fun yuv420ToNv21(image: ImageProxy): ByteArray {
+        val width = image.width
+        val height = image.height
+        val ySize = width * height
+        val uvSize = width * height / 4
+        val nv21 = ByteArray(ySize + uvSize * 2)
+
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+
+        var outputOffset = 0
+        val yBuffer = yPlane.buffer
+        val yRowStride = yPlane.rowStride
+        val yPixelStride = yPlane.pixelStride
+        for (row in 0 until height) {
+            val rowStart = row * yRowStride
+            for (col in 0 until width) {
+                nv21[outputOffset++] = yBuffer[rowStart + col * yPixelStride]
+            }
+        }
+
+        val chromaHeight = height / 2
+        val chromaWidth = width / 2
+        val uBuffer = uPlane.buffer
+        val vBuffer = vPlane.buffer
+        val uRowStride = uPlane.rowStride
+        val vRowStride = vPlane.rowStride
+        val uPixelStride = uPlane.pixelStride
+        val vPixelStride = vPlane.pixelStride
+
+        for (row in 0 until chromaHeight) {
+            val uRowStart = row * uRowStride
+            val vRowStart = row * vRowStride
+            for (col in 0 until chromaWidth) {
+                nv21[outputOffset++] = vBuffer[vRowStart + col * vPixelStride]
+                nv21[outputOffset++] = uBuffer[uRowStart + col * uPixelStride]
+            }
+        }
+
+        return nv21
+    }
+
+    private fun launchPreview(tempFile: File, fileName: String) {
         val intent = Intent(this, PreviewActivity::class.java).apply {
             putExtra(PreviewActivity.EXTRA_FILE_NAME, fileName)
-            tempUri?.let { putExtra(PreviewActivity.EXTRA_TEMP_URI, it.toString()) }
-            tempFile?.let { putExtra(PreviewActivity.EXTRA_TEMP_FILE_PATH, it.absolutePath) }
+            putExtra(PreviewActivity.EXTRA_TEMP_FILE_PATH, tempFile.absolutePath)
         }
         startActivity(intent)
     }
