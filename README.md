@@ -105,6 +105,7 @@
 - [x] "삭제"/닫기/액티비티 종료 시 cache 임시 파일 즉시 정리
 - [x] ImageProxy 변환/close 보장으로 메모리 누수 방지
 - [x] Android 10+ MediaStore, Android 9 이하 Downloads 저장 분기 유지
+- Fixed ImageProxy JPEG/YUV plane crash (safe format handling).
 
 ---
 
