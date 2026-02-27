@@ -36,7 +36,7 @@ class GateActivity : AppCompatActivity() {
         binding = ActivityGateBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        StorageModule.cleanupPendingCaptures(this)
+        StorageModule.cleanupTemporaryCaptures(this)
 
         binding.btnTakePhoto.setOnClickListener {
             if (hasRequiredPermissions()) {
