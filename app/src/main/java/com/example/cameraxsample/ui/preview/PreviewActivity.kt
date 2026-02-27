@@ -1,5 +1,6 @@
 package com.example.cameraxsample.ui.preview
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -10,6 +11,7 @@ import com.bumptech.glide.Glide
 import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityPreviewBinding
 import com.example.cameraxsample.storage.StorageModule
+import com.example.cameraxsample.ui.saved.SavedImageActivity
 import java.io.File
 
 class PreviewActivity : AppCompatActivity() {
@@ -65,12 +67,19 @@ class PreviewActivity : AppCompatActivity() {
         if (actionHandled) return
         actionHandled = true
 
+        var savedUri: Uri? = null
+        var savedFilePath: String? = null
+
         val saved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val uri = tempUri
             if (uri == null) {
                 false
             } else {
-                StorageModule.commitPendingCapture(this, uri)
+                val committed = StorageModule.commitPendingCapture(this, uri)
+                if (committed) {
+                    savedUri = uri
+                }
+                committed
             }
         } else {
             val path = tempFilePath
@@ -78,7 +87,11 @@ class PreviewActivity : AppCompatActivity() {
             if (tempFile == null || !tempFile.exists()) {
                 false
             } else {
-                StorageModule.saveLegacyTempCapture(this, tempFile, fileName) != null
+                val destination = StorageModule.saveLegacyTempCapture(this, tempFile, fileName)
+                if (destination != null) {
+                    savedFilePath = destination.absolutePath
+                }
+                destination != null
             }
         }
 
@@ -90,7 +103,13 @@ class PreviewActivity : AppCompatActivity() {
 
         cleanupLegacyTempAfterSave()
         Toast.makeText(this, R.string.msg_save_completed, Toast.LENGTH_SHORT).show()
-        Log.d(TAG, "Save completed. uri=$tempUri path=$tempFilePath")
+        Log.d(TAG, "Save completed. savedUri=$savedUri savedFilePath=$savedFilePath")
+
+        val intent = Intent(this, SavedImageActivity::class.java).apply {
+            putExtra(SavedImageActivity.EXTRA_SAVED_URI, savedUri?.toString())
+            putExtra(SavedImageActivity.EXTRA_SAVED_FILE_PATH, savedFilePath)
+        }
+        startActivity(intent)
         finish()
     }
 
