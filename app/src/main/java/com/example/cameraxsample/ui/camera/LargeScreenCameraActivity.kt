@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -38,6 +39,10 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class LargeScreenCameraActivity : AppCompatActivity() {
+
+    companion object {
+        private const val TAG = "LargeScreenCamera"
+    }
 
     private lateinit var binding: ActivityLargeScreenCameraBinding
     private lateinit var cameraExecutor: ExecutorService
@@ -74,7 +79,10 @@ class LargeScreenCameraActivity : AppCompatActivity() {
             val provider = cameraProviderFuture.get()
             cameraProvider = provider
 
-            val preview = Preview.Builder().build().also { it.surfaceProvider = binding.viewFinder.surfaceProvider }
+            val preview = Preview.Builder()
+                .setTargetRotation(android.view.Surface.ROTATION_0)
+                .build()
+                .also { it.surfaceProvider = binding.viewFinder.surfaceProvider }
             imageCapture = ImageCapture.Builder()
                 .setTargetRotation(android.view.Surface.ROTATION_0)
                 .build()
@@ -143,6 +151,7 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         } ?: return null
 
         val rotation = image.imageInfo.rotationDegrees
+        Log.d(TAG, "Captured image rotationDegrees=$rotation")
         if (rotation == 0) return bitmap
 
         val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
