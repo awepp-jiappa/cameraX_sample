@@ -35,7 +35,7 @@ object StorageModule {
     fun saveCapturedPhoto(context: Context, tempFile: File, fileName: String): SavedCaptureResult? {
         val savedUri = MediaStoreImageSaver.saveImage(
             context = context,
-            sourceFile = tempFile,
+            jpegBytes = tempFile.readBytes(),
             displayName = fileName,
         )
 

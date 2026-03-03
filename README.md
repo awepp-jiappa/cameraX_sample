@@ -171,6 +171,16 @@
 
 ---
 
+
+### PR-19) LargeScreenCameraActivity 최종 저장 회전 정규화
+- [x] 최종 저장 시 temp jpeg 원본 바이트를 그대로 복사하지 않고, 회전 정규화 후 JPEG로 재인코딩
+- [x] temp 파일 EXIF orientation을 읽어 픽셀 회전을 1회만 적용하고 최종 결과를 upright 상태로 저장
+- [x] 캡처 시점 rotationDegrees 로그 및 temp EXIF orientation 로그 추가
+- [x] 프리뷰 동작은 기존과 동일하게 유지
+- Fixed final saved image orientation by normalizing rotation before save.
+
+---
+
 ## 2. UI/회전 대응 규칙(결정사항)
 ### 권장안: `layout` / `layout-land` 2벌로 간다
 - 세로: 상단바(좌 플래시 / 우 닫기), 하단 중앙 촬영
