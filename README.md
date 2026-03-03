@@ -141,6 +141,18 @@
 
 ---
 
+
+### PR-16) LargeScreenCameraActivity 회전 로직 단순화 + 프리뷰 안정화
+- [x] LargeScreenCameraActivity의 회전/방향 감지 리스너 및 동적 rotation 업데이트 제거
+- [x] CameraX `Preview`/`ImageCapture`를 `Surface.ROTATION_0`으로 고정 바인딩
+- [x] `ImageProxy` -> `Bitmap` 변환 시 `rotationDegrees` 1회 적용 유지 및 캡처 회전 로그 추가
+- [x] 프리뷰 오버레이(`ivPreview`)의 `scaleType` 안정화로 예기치 않은 회전/줌 회귀 방지
+- [x] 기존 캡처/미리보기/저장/삭제 플로우는 변경 없이 안정성만 개선
+- Simplified rotation/orientation logic after portrait lock to reduce bugs.
+- Ensured preview orientation and scaleType stability (no unexpected rotate/zoom).
+
+---
+
 ## 2. UI/회전 대응 규칙(결정사항)
 ### 권장안: `layout` / `layout-land` 2벌로 간다
 - 세로: 상단바(좌 플래시 / 우 닫기), 하단 중앙 촬영
