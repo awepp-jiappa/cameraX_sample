@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,6 +16,7 @@ import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityGateBinding
 import com.example.cameraxsample.storage.StorageModule
 import com.example.cameraxsample.ui.camera.CameraActivity
+import com.example.cameraxsample.ui.camera.LargeScreenCameraActivity
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
 class GateActivity : AppCompatActivity() {
@@ -112,6 +114,18 @@ class GateActivity : AppCompatActivity() {
     }
 
     private fun navigateToCamera() {
-        startActivity(Intent(this, CameraActivity::class.java))
+        if (isLargeScreen()) {
+            Log.d("GateActivity", "Gate routing: LargeScreenCameraActivity")
+            startActivity(Intent(this, LargeScreenCameraActivity::class.java).apply {
+                intent.extras?.let { putExtras(it) }
+            })
+        } else {
+            Log.d("GateActivity", "Gate routing: Default camera")
+            startActivity(Intent(this, CameraActivity::class.java))
+        }
+    }
+
+    private fun isLargeScreen(): Boolean {
+        return resources.configuration.smallestScreenWidthDp >= 600
     }
 }

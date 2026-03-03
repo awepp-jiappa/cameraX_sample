@@ -107,6 +107,12 @@
 - [x] Android 10+ MediaStore, Android 9 이하 Downloads 저장 분기 유지
 - Fixed ImageProxy JPEG/YUV plane crash (safe format handling).
 
+### PR-12) GateActivity 대화면 카메라 라우팅
+- [x] GateActivity에서 대화면 기기(smallestScreenWidthDp >= 600) 감지
+- [x] 대화면이면 `LargeScreenCameraActivity`로 라우팅
+- [x] 일반 화면은 기존 카메라 진입 로직 유지
+- [x] GateActivity routes large-screen (smallestScreenWidthDp >= 600) devices to LargeScreenCameraActivity.
+
 ---
 
 ## 2. UI/회전 대응 규칙(결정사항)
