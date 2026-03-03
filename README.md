@@ -153,6 +153,17 @@
 
 ---
 
+
+### PR-17) LargeScreenCameraActivity 멀티 윈도우/분할 화면 리사이즈 대응
+- [x] LargeScreenCameraActivity를 portrait lock 유지 상태로 multi-window/split-screen 진입/복귀 시 안전하게 재바인딩
+- [x] `onMultiWindowModeChanged` / `onConfigurationChanged`에서 CameraX use case 재바인딩 처리
+- [x] 재바인딩 실패 시 앱 크래시 방지를 위한 safe rebind 예외 처리 추가
+- [x] PreviewView를 `implementationMode="performance"`로 조정하고 `ivPreview` `fitCenter` 유지
+- [x] Added multi-window / split-screen safe rebind logic.
+- [x] LargeScreenCameraActivity remains portrait-locked but now handles window resizing safely.
+
+---
+
 ## 2. UI/회전 대응 규칙(결정사항)
 ### 권장안: `layout` / `layout-land` 2벌로 간다
 - 세로: 상단바(좌 플래시 / 우 닫기), 하단 중앙 촬영
