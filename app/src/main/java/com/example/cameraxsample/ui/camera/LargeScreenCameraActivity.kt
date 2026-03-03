@@ -14,7 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
-import android.view.Surface
+import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
@@ -63,12 +63,9 @@ class LargeScreenCameraActivity : AppCompatActivity() {
 
     private fun setupUi() {
         binding.btnClose.setOnClickListener { finish() }
-        binding.btnShutter.setOnClickListener { capturePhoto() }
+        binding.btnShutter.setOnClickListener { takePhoto() }
         binding.btnSave.setOnClickListener { onSavePreview() }
         binding.btnDiscard.setOnClickListener { onDiscardPreview() }
-        binding.viewFinder.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            imageCapture?.targetRotation = binding.viewFinder.display?.rotation ?: Surface.ROTATION_0
-        }
     }
 
     private fun startCamera() {
@@ -79,7 +76,7 @@ class LargeScreenCameraActivity : AppCompatActivity() {
 
             val preview = Preview.Builder().build().also { it.surfaceProvider = binding.viewFinder.surfaceProvider }
             imageCapture = ImageCapture.Builder()
-                .setTargetRotation(binding.viewFinder.display?.rotation ?: Surface.ROTATION_0)
+                .setTargetRotation(android.view.Surface.ROTATION_0)
                 .build()
 
             try {
@@ -97,7 +94,12 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
-    private fun capturePhoto() {
+
+    private fun takePhoto() {
+        captureToPreview()
+    }
+
+    private fun captureToPreview() {
         val capture = imageCapture ?: return
         binding.btnShutter.isEnabled = false
 
@@ -159,7 +161,7 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     }
 
     private fun yuvImageToBitmap(image: ImageProxy): Bitmap? {
-        val nv21 = yuv420888ToNv21(image)
+        val nv21 = yuv420888ToNv21(image) ?: return null
         val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
         val out = ByteArrayOutputStream()
         if (!yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 95, out)) {
@@ -169,16 +171,18 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         return BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
     }
 
-    private fun yuv420888ToNv21(image: ImageProxy): ByteArray {
+    private fun yuv420888ToNv21(image: ImageProxy): ByteArray? {
+        if (image.planes.size < 3) return null
+
         val width = image.width
         val height = image.height
         val ySize = width * height
         val uvSize = width * height / 4
         val nv21 = ByteArray(ySize + uvSize * 2)
 
-        val yPlane = image.planes[0]
-        val uPlane = image.planes[1]
-        val vPlane = image.planes[2]
+        val yPlane = image.planes.getOrNull(0) ?: return null
+        val uPlane = image.planes.getOrNull(1) ?: return null
+        val vPlane = image.planes.getOrNull(2) ?: return null
 
         copyPlane(yPlane.buffer, width, height, yPlane.rowStride, yPlane.pixelStride, nv21, 0, 1)
         copyPlane(vPlane.buffer, width / 2, height / 2, vPlane.rowStride, vPlane.pixelStride, nv21, ySize, 2)
@@ -247,46 +251,87 @@ class LargeScreenCameraActivity : AppCompatActivity() {
 
     private fun onSavePreview() {
         val tempFile = pendingTempFile ?: return
-        val saved = try {
-            saveTempFileToDownloads(tempFile)
-        } catch (_: Exception) {
-            false
+        binding.btnSave.isEnabled = false
+        saveFinalImage(tempFile)
+    }
+
+    private fun saveFinalImage(tempFile: File) {
+        val saveCallback = object : ImageCapture.OnImageSavedCallback {
+            override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                runOnUiThread {
+                    binding.btnSave.isEnabled = true
+                    deleteTempFile(tempFile)
+                    Toast.makeText(this@LargeScreenCameraActivity, R.string.msg_save_completed, Toast.LENGTH_SHORT).show()
+                    clearPreviewMode()
+                }
+            }
+
+            override fun onError(exception: ImageCaptureException) {
+                runOnUiThread {
+                    binding.btnSave.isEnabled = true
+                    Toast.makeText(this@LargeScreenCameraActivity, R.string.msg_photo_save_failed, Toast.LENGTH_SHORT).show()
+                }
+            }
         }
 
-        if (saved) {
-            deleteTempFile(tempFile)
-            Toast.makeText(this, R.string.msg_save_completed, Toast.LENGTH_SHORT).show()
-            clearPreviewMode()
-        } else {
-            Toast.makeText(this, R.string.msg_photo_save_failed, Toast.LENGTH_SHORT).show()
+        cameraExecutor.execute {
+            if (!tempFile.exists()) {
+                saveCallback.onError(
+                    ImageCaptureException(
+                        ImageCapture.ERROR_FILE_IO,
+                        "Temporary file is missing",
+                        null,
+                    ),
+                )
+                return@execute
+            }
+
+            val savedUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveTempFileToMediaStore(tempFile)
+            } else {
+                saveTempFileToLegacyDownloads(tempFile)
+            }
+
+            if (savedUri != null) {
+                saveCallback.onImageSaved(ImageCapture.OutputFileResults(savedUri))
+            } else {
+                saveCallback.onError(
+                    ImageCaptureException(
+                        ImageCapture.ERROR_FILE_IO,
+                        "Failed to save image",
+                        null,
+                    ),
+                )
+            }
         }
     }
 
-    private fun saveTempFileToDownloads(tempFile: File): Boolean {
-        if (!tempFile.exists()) return false
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, createPhotoFileName())
-                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/codex_app/cameraX")
-            }
-            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-                ?: return false
-            return try {
-                contentResolver.openOutputStream(uri)?.use { output ->
-                    tempFile.inputStream().use { input -> input.copyTo(output) }
-                } ?: throw IOException("Failed to open output stream")
-                true
-            } catch (_: Exception) {
-                contentResolver.delete(uri, null, null)
-                false
-            }
+    private fun saveTempFileToMediaStore(tempFile: File): android.net.Uri? {
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, createPhotoFileName())
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/codex_app/cameraX")
         }
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            ?: return null
 
+        return try {
+            contentResolver.openOutputStream(uri)?.use { output ->
+                tempFile.inputStream().use { input -> input.copyTo(output) }
+            } ?: throw IOException("Failed to open output stream")
+            uri
+        } catch (_: Exception) {
+            contentResolver.delete(uri, null, null)
+            null
+        }
+    }
+
+    private fun saveTempFileToLegacyDownloads(tempFile: File): android.net.Uri? {
         if (!hasLegacyWritePermission()) {
-            Toast.makeText(this, R.string.required_permissions_needed, Toast.LENGTH_SHORT).show()
-            return false
+            runOnUiThread {
+                Toast.makeText(this, R.string.required_permissions_needed, Toast.LENGTH_SHORT).show()
+            }
+            return null
         }
 
         val destination = createLegacyOutputFile()
@@ -300,9 +345,9 @@ class LargeScreenCameraActivity : AppCompatActivity() {
                 arrayOf("image/jpeg"),
                 null,
             )
-            true
+            android.net.Uri.fromFile(destination)
         } catch (_: Exception) {
-            false
+            null
         }
     }
 
@@ -315,10 +360,11 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     private fun clearPreviewMode() {
         Glide.with(this).clear(binding.ivPreview)
         binding.ivPreview.setImageDrawable(null)
-        binding.ivPreview.visibility = android.view.View.GONE
-        binding.previewActions.visibility = android.view.View.GONE
-        binding.btnShutter.visibility = android.view.View.VISIBLE
+        binding.ivPreview.visibility = View.GONE
+        binding.previewActions.visibility = View.GONE
+        binding.btnShutter.visibility = View.VISIBLE
         binding.btnShutter.isEnabled = true
+        binding.btnSave.isEnabled = true
 
         pendingTempFile = null
     }

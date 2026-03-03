@@ -23,7 +23,9 @@
             android:exported="false" />
         <activity
             android:name=".ui.camera.LargeScreenCameraActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.CameraXSample" />
         <activity
             android:name=".ui.gate.GateActivity"
