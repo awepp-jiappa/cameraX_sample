@@ -229,3 +229,16 @@
 - [x] 최종 저장 시 기존 JPEG/EXIF 복사 없이 정규화 bitmap을 JPEG로 압축하여 MediaStore(OutputStream)에 직접 기록
 - [x] Android 9 이하도 정규화 bitmap을 신규 JPEG 파일로 저장 후 스캔
 - Saved photos are now normalized to 0° upright orientation regardless of device rotation (90/180/270).
+
+## PR-20: Save Image Orientation Normalization
+- [x] Fixed saved image rotation issue in `LargeScreenCameraActivity`.
+- [x] Final saved images are normalized to upright 0° orientation.
+- [x] Device rotation (90/180/270) no longer affects gallery display.
+- [x] Rotation is applied exactly once during normalization.
+- [x] EXIF orientation is not relied upon.
+
+Description:
+- `rotationDegrees` from CameraX capture metadata is applied exactly once to bitmap pixels during normalization.
+- `ImageProxy -> Bitmap` conversion path does not rotate.
+- Normalized bitmap is used for both in-app preview and final MediaStore save.
+- Final save uses bitmap re-encoding to JPEG output stream, without EXIF orientation dependency.

@@ -2,6 +2,7 @@ package com.example.cameraxsample.ui.camera
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
@@ -11,6 +12,7 @@ import android.graphics.YuvImage
 import android.os.Build
 import android.os.Bundle
 import android.content.res.Configuration
+import android.provider.MediaStore
 import android.util.Log
 import android.view.View
 import android.widget.Toast
@@ -25,7 +27,6 @@ import androidx.core.content.ContextCompat
 import com.bumptech.glide.Glide
 import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityLargeScreenCameraBinding
-import com.example.cameraxsample.storage.MediaStoreImageSaver
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -92,12 +93,14 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         }
 
         val preview = Preview.Builder()
-            .setTargetRotation(android.view.Surface.ROTATION_0)
             .build()
-            .also { it.surfaceProvider = binding.viewFinder.surfaceProvider }
+            .also {
+                it.targetRotation = android.view.Surface.ROTATION_0
+                it.surfaceProvider = binding.viewFinder.surfaceProvider
+            }
         imageCapture = ImageCapture.Builder()
-            .setTargetRotation(android.view.Surface.ROTATION_0)
             .build()
+            .also { it.targetRotation = android.view.Surface.ROTATION_0 }
 
         provider.unbindAll()
         provider.bindToLifecycle(
@@ -152,13 +155,30 @@ class LargeScreenCameraActivity : AppCompatActivity() {
             override fun onCaptureSuccess(image: ImageProxy) {
                 try {
                     val rotationDegrees = image.imageInfo.rotationDegrees
+                    Log.d(TAG, "rotationDegrees=$rotationDegrees")
                     val rawBitmap = imageProxyToBitmap(image)
                         ?: throw IOException("Failed to decode image")
-                    val normalizedBitmap = applyCaptureRotation(rawBitmap, rotationDegrees)
+                    val normalizedBitmap =
+                        if (rotationDegrees != 0) {
+                            val matrix = Matrix().apply {
+                                postRotate(rotationDegrees.toFloat())
+                            }
+                            Bitmap.createBitmap(
+                                rawBitmap,
+                                0,
+                                0,
+                                rawBitmap.width,
+                                rawBitmap.height,
+                                matrix,
+                                true,
+                            )
+                        } else {
+                            rawBitmap
+                        }
                     if (normalizedBitmap != rawBitmap) {
                         rawBitmap.recycle()
                     }
-                    Log.d(TAG, "rotationDegrees applied for normalization = $rotationDegrees")
+                    Log.d(TAG, "normalizedBitmap size=${normalizedBitmap.width}x${normalizedBitmap.height}")
 
                     runOnUiThread {
                         binding.btnShutter.isEnabled = true
@@ -190,12 +210,6 @@ class LargeScreenCameraActivity : AppCompatActivity() {
             ImageFormat.YUV_420_888 -> yuvImageToBitmap(image)
             else -> null
         }
-    }
-
-    private fun applyCaptureRotation(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
-        if (rotationDegrees == 0) return bitmap
-        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
     private fun jpegImageToBitmap(image: ImageProxy): Bitmap? {
@@ -309,23 +323,7 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         }
 
         cameraExecutor.execute {
-            val imageBytes = bitmapToJpegBytes(normalizedBitmap)
-                ?: run {
-                    saveCallback.onError(
-                        ImageCaptureException(
-                            ImageCapture.ERROR_FILE_IO,
-                            "Failed to compress image",
-                            null,
-                        ),
-                    )
-                    return@execute
-                }
-
-            val savedUri = MediaStoreImageSaver.saveImage(
-                context = this,
-                jpegBytes = imageBytes,
-                displayName = createPhotoFileName(),
-            )
+            val savedUri = saveNormalizedBitmapToMediaStore(normalizedBitmap, createPhotoFileName())
             Log.d(TAG, "saveFinalImage result uri=$savedUri")
 
             if (savedUri != null) {
@@ -342,11 +340,39 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         }
     }
 
-    private fun bitmapToJpegBytes(bitmap: Bitmap): ByteArray? {
-        val output = ByteArrayOutputStream()
-        return if (bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)) {
-            output.toByteArray()
-        } else {
+    private fun saveNormalizedBitmapToMediaStore(bitmap: Bitmap, displayName: String): android.net.Uri? {
+        val resolver = contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/codex_app/cameraX")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+        }
+
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: return null
+
+        return try {
+            val wroteBitmap = resolver.openOutputStream(uri)?.use { output ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)
+            } ?: false
+
+            if (!wroteBitmap) {
+                throw IOException("Failed to encode normalized bitmap")
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val pendingValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.IS_PENDING, 0)
+                }
+                resolver.update(uri, pendingValues, null, null)
+            }
+            uri
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save normalized bitmap uri=$uri", e)
+            resolver.delete(uri, null, null)
             null
         }
     }
