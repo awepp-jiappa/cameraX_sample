@@ -131,6 +131,16 @@
 
 ---
 
+### PR-15) LargeScreenCameraActivity 세로 고정 + dual callback 구조 정리
+- [x] LargeScreenCameraActivity locked to portrait orientation.
+- [x] `takePhoto` 흐름을 `captureToPreview()` + `saveFinalImage()` 구조로 분리
+- [x] `OnImageCapturedCallback` 기반 preview-first 캡처 동작 유지
+- [x] `OnImageSavedCallback` 기반 최종 저장 콜백(`onImageSaved`/`onError`) 구현
+- [x] LargeScreenCameraActivity locked to portrait orientation.
+- [x] Refactored takePhoto to support both OnImageCapturedCallback (preview) and OnImageSavedCallback (final save).
+
+---
+
 ## 2. UI/회전 대응 규칙(결정사항)
 ### 권장안: `layout` / `layout-land` 2벌로 간다
 - 세로: 상단바(좌 플래시 / 우 닫기), 하단 중앙 촬영
