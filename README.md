@@ -173,11 +173,11 @@
 
 
 ### PR-19) LargeScreenCameraActivity 최종 저장 회전 정규화
-- [x] 최종 저장 시 temp jpeg 원본 바이트를 그대로 복사하지 않고, 회전 정규화 후 JPEG로 재인코딩
-- [x] temp 파일 EXIF orientation을 읽어 픽셀 회전을 1회만 적용하고 최종 결과를 upright 상태로 저장
-- [x] 캡처 시점 rotationDegrees 로그 및 temp EXIF orientation 로그 추가
-- [x] 프리뷰 동작은 기존과 동일하게 유지
-- Fixed final saved image orientation by normalizing rotation before save.
+- [x] `OnImageCapturedCallback`에서 `rotationDegrees`를 읽고 Bitmap 변환 후 `Matrix.postRotate()`로 1회만 회전 적용
+- [x] temp 파일 저장 시 회전이 반영된 비트맵을 저장하고 중복 회전 로직 제거
+- [x] MediaStore 최종 저장은 temp 파일 바이트를 그대로 복사 (추가 회전/EXIF 수정 없음)
+- [x] 회전 로그 추가: `rotationDegrees applied = ...`
+- [x] Saved image now matches preview orientation exactly (single rotation application).
 
 ---
 

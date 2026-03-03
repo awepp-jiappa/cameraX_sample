@@ -22,7 +22,6 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
-import androidx.exifinterface.media.ExifInterface
 import com.bumptech.glide.Glide
 import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityLargeScreenCameraBinding
@@ -154,10 +153,17 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         capture.takePicture(cameraExecutor, object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
                 try {
+                    val rotationDegrees = image.imageInfo.rotationDegrees
                     val bitmap = imageProxyToBitmap(image)
                         ?: throw IOException("Failed to decode image")
-                    val tempFile = writeBitmapToTempFile(bitmap)
-                    bitmap.recycle()
+                    val rotatedBitmap = applyCaptureRotation(bitmap, rotationDegrees)
+                    Log.d(TAG, "rotationDegrees applied = $rotationDegrees")
+
+                    val tempFile = writeBitmapToTempFile(rotatedBitmap)
+                    if (rotatedBitmap != bitmap) {
+                        bitmap.recycle()
+                    }
+                    rotatedBitmap.recycle()
 
                     runOnUiThread {
                         binding.btnShutter.isEnabled = true
@@ -184,22 +190,17 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     }
 
     private fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
-        val bitmap = when (image.format) {
+        return when (image.format) {
             ImageFormat.JPEG -> jpegImageToBitmap(image)
             ImageFormat.YUV_420_888 -> yuvImageToBitmap(image)
             else -> null
-        } ?: return null
-
-        val rotation = image.imageInfo.rotationDegrees
-        Log.d(TAG, "Captured image rotationDegrees=$rotation")
-        if (rotation == 0) return bitmap
-
-        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-        val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        if (rotated != bitmap) {
-            bitmap.recycle()
         }
-        return rotated
+    }
+
+    private fun applyCaptureRotation(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
+        if (rotationDegrees == 0) return bitmap
+        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
     private fun jpegImageToBitmap(image: ImageProxy): Bitmap? {
@@ -335,27 +336,11 @@ class LargeScreenCameraActivity : AppCompatActivity() {
                 return@execute
             }
 
-            val normalizedBytes = try {
-                normalizeTempImageForFinalSave(tempFile)
-            } catch (exception: Exception) {
-                Log.e(TAG, "Failed to normalize image before final save", exception)
-                null
-            }
-
-            if (normalizedBytes == null) {
-                saveCallback.onError(
-                    ImageCaptureException(
-                        ImageCapture.ERROR_FILE_IO,
-                        "Failed to normalize image",
-                        null,
-                    ),
-                )
-                return@execute
-            }
+            val imageBytes = tempFile.readBytes()
 
             val savedUri = MediaStoreImageSaver.saveImage(
                 context = this,
-                jpegBytes = normalizedBytes,
+                jpegBytes = imageBytes,
                 displayName = createPhotoFileName(),
             )
             Log.d(TAG, "saveFinalImage result uri=$savedUri")
@@ -372,60 +357,6 @@ class LargeScreenCameraActivity : AppCompatActivity() {
                 )
             }
         }
-    }
-
-    private fun normalizeTempImageForFinalSave(tempFile: File): ByteArray {
-        val exif = ExifInterface(tempFile.absolutePath)
-        val exifOrientation = exif.getAttributeInt(
-            ExifInterface.TAG_ORIENTATION,
-            ExifInterface.ORIENTATION_NORMAL,
-        )
-        Log.d(TAG, "Temp image EXIF orientation=$exifOrientation")
-
-        val sourceBitmap = BitmapFactory.decodeFile(tempFile.absolutePath)
-            ?: throw IOException("Failed to decode temp jpeg")
-
-        val normalizedBitmap = applyExifOrientation(sourceBitmap, exifOrientation)
-        val output = ByteArrayOutputStream()
-        if (!normalizedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)) {
-            if (normalizedBitmap != sourceBitmap) {
-                normalizedBitmap.recycle()
-            }
-            sourceBitmap.recycle()
-            throw IOException("Failed to re-encode normalized jpeg")
-        }
-
-        if (normalizedBitmap != sourceBitmap) {
-            normalizedBitmap.recycle()
-        }
-        sourceBitmap.recycle()
-        return output.toByteArray()
-    }
-
-    private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
-        val matrix = Matrix()
-        when (orientation) {
-            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
-            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
-            ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
-                matrix.setRotate(180f)
-                matrix.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_TRANSPOSE -> {
-                matrix.setRotate(90f)
-                matrix.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
-            ExifInterface.ORIENTATION_TRANSVERSE -> {
-                matrix.setRotate(-90f)
-                matrix.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
-            else -> return bitmap
-        }
-
-        val transformed = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        return transformed
     }
 
     private fun onDiscardPreview() {
