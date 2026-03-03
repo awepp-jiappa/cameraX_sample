@@ -121,6 +121,14 @@
 - [x] Android 10+ MediaStore RELATIVE_PATH 및 Android 9 이하 Downloads 저장 분기 적용
 - Implemented CameraX capture for large-screen route using OnImageSavedCallback with in-app preview (Save/Discard).
 
+### PR-14) LargeScreenCameraActivity preview-first 저장 확정 플로우
+- [x] `OnImageCapturedCallback` 기반 메모리 캡처로 변경 (촬영 시 최종 저장 금지)
+- [x] ImageProxy JPEG/YUV 포맷 분기 처리 + 회전 보정으로 안전한 프리뷰 변환
+- [x] 캡처 이미지를 cache 임시 파일에 저장 후 같은 화면 오버레이 미리보기 표시
+- [x] 저장 버튼에서만 Download/codex_app/cameraX 최종 저장 (Q+ MediaStore / <=28 Downloads)
+- [x] 삭제/종료 시 cache 임시 파일 즉시 정리
+- LargeScreenCameraActivity changed to preview-first flow (capture in memory/cache, save only on confirm).
+
 ---
 
 ## 2. UI/회전 대응 규칙(결정사항)
