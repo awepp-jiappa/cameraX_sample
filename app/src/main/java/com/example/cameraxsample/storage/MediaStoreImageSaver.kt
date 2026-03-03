@@ -8,8 +8,8 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import androidx.exifinterface.media.ExifInterface
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 
 object MediaStoreImageSaver {
@@ -20,17 +20,17 @@ object MediaStoreImageSaver {
 
     fun saveImage(
         context: Context,
-        sourceFile: File,
+        jpegBytes: ByteArray,
         displayName: String,
     ): Uri? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            saveToMediaStore(context, sourceFile, displayName)
+            saveToMediaStore(context, jpegBytes, displayName)
         } else {
-            saveLegacyImage(context, sourceFile, displayName)
+            saveLegacyImage(context, jpegBytes, displayName)
         }
     }
 
-    private fun saveToMediaStore(context: Context, sourceFile: File, displayName: String): Uri? {
+    private fun saveToMediaStore(context: Context, jpegBytes: ByteArray, displayName: String): Uri? {
         val resolver = context.contentResolver
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
@@ -53,10 +53,14 @@ object MediaStoreImageSaver {
 
         return try {
             resolver.openOutputStream(uri)?.use { output ->
-                FileInputStream(sourceFile).use { input ->
-                    input.copyTo(output)
-                }
+                output.write(jpegBytes)
             } ?: throw IllegalStateException("Output stream is null")
+
+            resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
+                val exif = ExifInterface(pfd.fileDescriptor)
+                exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+                exif.saveAttributes()
+            }
 
             val pendingValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -71,7 +75,7 @@ object MediaStoreImageSaver {
         }
     }
 
-    private fun saveLegacyImage(context: Context, sourceFile: File, displayName: String): Uri? {
+    private fun saveLegacyImage(context: Context, jpegBytes: ByteArray, displayName: String): Uri? {
         return try {
             val picturesDirectory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
             val targetDirectory = File(picturesDirectory, LEGACY_SUB_DIRECTORY)
@@ -80,11 +84,12 @@ object MediaStoreImageSaver {
             }
 
             val destination = File(targetDirectory, displayName)
-            FileInputStream(sourceFile).use { input ->
-                FileOutputStream(destination).use { output ->
-                    input.copyTo(output)
-                }
+            FileOutputStream(destination).use { output ->
+                output.write(jpegBytes)
             }
+            val exif = ExifInterface(destination.absolutePath)
+            exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+            exif.saveAttributes()
 
             MediaScannerConnection.scanFile(
                 context,
@@ -97,7 +102,7 @@ object MediaStoreImageSaver {
             Log.d(TAG, "saveImage legacy success uri=$uri")
             uri
         } catch (exception: Exception) {
-            Log.e(TAG, "Failed to save legacy image path=${sourceFile.absolutePath}", exception)
+            Log.e(TAG, "Failed to save legacy image displayName=$displayName", exception)
             null
         }
     }
