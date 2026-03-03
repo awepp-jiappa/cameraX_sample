@@ -8,7 +8,6 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
-import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import java.io.FileOutputStream
 
@@ -56,11 +55,6 @@ object MediaStoreImageSaver {
                 output.write(jpegBytes)
             } ?: throw IllegalStateException("Output stream is null")
 
-            resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                val exif = ExifInterface(pfd.fileDescriptor)
-                exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-                exif.saveAttributes()
-            }
 
             val pendingValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -87,9 +81,6 @@ object MediaStoreImageSaver {
             FileOutputStream(destination).use { output ->
                 output.write(jpegBytes)
             }
-            val exif = ExifInterface(destination.absolutePath)
-            exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-            exif.saveAttributes()
 
             MediaScannerConnection.scanFile(
                 context,
