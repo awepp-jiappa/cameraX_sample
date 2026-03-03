@@ -9,6 +9,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 
 object MediaStoreImageSaver {
@@ -19,17 +20,17 @@ object MediaStoreImageSaver {
 
     fun saveImage(
         context: Context,
-        jpegBytes: ByteArray,
+        sourceFile: File,
         displayName: String,
     ): Uri? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            saveToMediaStore(context, jpegBytes, displayName)
+            saveToMediaStore(context, sourceFile, displayName)
         } else {
-            saveLegacyImage(context, jpegBytes, displayName)
+            saveLegacyImage(context, sourceFile, displayName)
         }
     }
 
-    private fun saveToMediaStore(context: Context, jpegBytes: ByteArray, displayName: String): Uri? {
+    private fun saveToMediaStore(context: Context, sourceFile: File, displayName: String): Uri? {
         val resolver = context.contentResolver
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
@@ -52,9 +53,10 @@ object MediaStoreImageSaver {
 
         return try {
             resolver.openOutputStream(uri)?.use { output ->
-                output.write(jpegBytes)
+                FileInputStream(sourceFile).use { input ->
+                    input.copyTo(output)
+                }
             } ?: throw IllegalStateException("Output stream is null")
-
 
             val pendingValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -69,7 +71,7 @@ object MediaStoreImageSaver {
         }
     }
 
-    private fun saveLegacyImage(context: Context, jpegBytes: ByteArray, displayName: String): Uri? {
+    private fun saveLegacyImage(context: Context, sourceFile: File, displayName: String): Uri? {
         return try {
             val picturesDirectory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
             val targetDirectory = File(picturesDirectory, LEGACY_SUB_DIRECTORY)
@@ -78,8 +80,10 @@ object MediaStoreImageSaver {
             }
 
             val destination = File(targetDirectory, displayName)
-            FileOutputStream(destination).use { output ->
-                output.write(jpegBytes)
+            FileInputStream(sourceFile).use { input ->
+                FileOutputStream(destination).use { output ->
+                    input.copyTo(output)
+                }
             }
 
             MediaScannerConnection.scanFile(
@@ -93,7 +97,7 @@ object MediaStoreImageSaver {
             Log.d(TAG, "saveImage legacy success uri=$uri")
             uri
         } catch (exception: Exception) {
-            Log.e(TAG, "Failed to save legacy image displayName=$displayName", exception)
+            Log.e(TAG, "Failed to save legacy image path=${sourceFile.absolutePath}", exception)
             null
         }
     }
