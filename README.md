@@ -113,6 +113,14 @@
 - [x] 일반 화면은 기존 카메라 진입 로직 유지
 - [x] GateActivity routes large-screen (smallestScreenWidthDp >= 600) devices to LargeScreenCameraActivity.
 
+### PR-13) LargeScreenCameraActivity CameraX 캡처 + 인앱 미리보기
+- [x] LargeScreenCameraActivity에 CameraX Preview(PreviewView) 연결
+- [x] `ImageCapture.takePicture(..., OnImageSavedCallback)`로 촬영 저장 구현
+- [x] 촬영 직후 인앱 오버레이 미리보기(`ivPreview`) + 저장/삭제 버튼 제공
+- [x] 저장(유지)/삭제(파일 제거) 후 카메라 모드 복귀 처리
+- [x] Android 10+ MediaStore RELATIVE_PATH 및 Android 9 이하 Downloads 저장 분기 적용
+- Implemented CameraX capture for large-screen route using OnImageSavedCallback with in-app preview (Save/Discard).
+
 ---
 
 ## 2. UI/회전 대응 규칙(결정사항)
