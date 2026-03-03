@@ -13,6 +13,7 @@ import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.content.res.Configuration
 import android.provider.MediaStore
 import android.util.Log
 import android.view.View
@@ -79,27 +80,68 @@ class LargeScreenCameraActivity : AppCompatActivity() {
             val provider = cameraProviderFuture.get()
             cameraProvider = provider
 
-            val preview = Preview.Builder()
-                .setTargetRotation(android.view.Surface.ROTATION_0)
-                .build()
-                .also { it.surfaceProvider = binding.viewFinder.surfaceProvider }
-            imageCapture = ImageCapture.Builder()
-                .setTargetRotation(android.view.Surface.ROTATION_0)
-                .build()
-
             try {
-                provider.unbindAll()
-                provider.bindToLifecycle(
-                    this,
-                    CameraSelector.DEFAULT_BACK_CAMERA,
-                    preview,
-                    imageCapture,
-                )
+                bindCameraUseCases()
+                logWindowMetrics("startCamera")
             } catch (_: Exception) {
                 Toast.makeText(this, R.string.msg_camera_init_failed, Toast.LENGTH_SHORT).show()
                 finish()
             }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun bindCameraUseCases() {
+        val provider = cameraProvider ?: return
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.INITIALIZED) || isDestroyed) {
+            return
+        }
+
+        val preview = Preview.Builder()
+            .setTargetRotation(android.view.Surface.ROTATION_0)
+            .build()
+            .also { it.surfaceProvider = binding.viewFinder.surfaceProvider }
+        imageCapture = ImageCapture.Builder()
+            .setTargetRotation(android.view.Surface.ROTATION_0)
+            .build()
+
+        provider.unbindAll()
+        provider.bindToLifecycle(
+            this,
+            CameraSelector.DEFAULT_BACK_CAMERA,
+            preview,
+            imageCapture,
+        )
+    }
+
+    private fun rebindCameraSafely() {
+        try {
+            cameraProvider?.unbindAll()
+            bindCameraUseCases()
+            logWindowMetrics("rebindCameraSafely")
+        } catch (e: Exception) {
+            Log.e(TAG, "Camera rebind failed", e)
+        }
+    }
+
+    private fun logWindowMetrics(source: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager.currentWindowMetrics.bounds
+            Log.d(TAG, "$source window=${bounds.width()}x${bounds.height()}")
+            return
+        }
+
+        val metrics = resources.displayMetrics
+        Log.d(TAG, "$source window=${metrics.widthPixels}x${metrics.heightPixels}")
+    }
+
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode)
+        rebindCameraSafely()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        rebindCameraSafely()
     }
 
 
