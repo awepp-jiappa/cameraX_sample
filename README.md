@@ -242,3 +242,18 @@ Description:
 - `ImageProxy -> Bitmap` conversion path does not rotate.
 - Normalized bitmap is used for both in-app preview and final MediaStore save.
 - Final save uses bitmap re-encoding to JPEG output stream, without EXIF orientation dependency.
+
+---
+
+### PR-22) Orientation Normalization Fix (always upright)
+- [x] Final save now uses bitmap re-encoding only (no temp file byte copy).
+- [x] Added capture logs for `rotationDegrees` and applied inverse normalization rule.
+- [x] Applied normalization with inverse rule: `normalizedDeg = (360 - rotationDegrees) % 360`.
+- [x] Rotation is applied exactly once (ImageProxy decode path stays unrotated).
+- [x] Preview (`ivPreview`) and final saved output both use the same normalized bitmap.
+- [x] Added temporary debug overlay (bottom-left) showing `rotationDegrees` / `normalizedDeg`.
+
+PR-22 Notes:
+- Final save uses bitmap re-encoding (no temp file copy).
+- Normalization uses inverse `rotationDegrees` to guarantee upright gallery display.
+- Preview and saved output now match.
