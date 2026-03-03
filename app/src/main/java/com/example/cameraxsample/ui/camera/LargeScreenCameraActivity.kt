@@ -2,23 +2,17 @@ package com.example.cameraxsample.ui.camera
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
-import android.os.Environment
 import android.os.Build
 import android.os.Bundle
 import android.content.res.Configuration
-import android.provider.MediaStore
 import android.util.Log
-import android.util.TypedValue
-import android.view.Gravity
 import android.view.View
-import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
@@ -31,6 +25,7 @@ import androidx.core.content.ContextCompat
 import com.bumptech.glide.Glide
 import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityLargeScreenCameraBinding
+import com.example.cameraxsample.storage.MediaStoreImageSaver
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -51,8 +46,7 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private var imageCapture: ImageCapture? = null
     private var cameraProvider: ProcessCameraProvider? = null
-    private var pendingNormalizedBitmap: Bitmap? = null
-    private lateinit var debugOverlay: TextView
+    private var pendingTempFile: File? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,36 +65,10 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     }
 
     private fun setupUi() {
-        setupDebugOverlay()
         binding.btnClose.setOnClickListener { finish() }
         binding.btnShutter.setOnClickListener { takePhoto() }
         binding.btnSave.setOnClickListener { onSavePreview() }
         binding.btnDiscard.setOnClickListener { onDiscardPreview() }
-    }
-
-    private fun setupDebugOverlay() {
-        debugOverlay = TextView(this).apply {
-            id = View.generateViewId()
-            setTextColor(android.graphics.Color.WHITE)
-            setBackgroundColor(0x66000000)
-            setPadding(dp(8), dp(6), dp(8), dp(6))
-            textSize = 12f
-            text = "rotationDegrees=-\nnormalizedDeg=-"
-        }
-
-        val params = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT,
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT,
-        ).apply {
-            startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-            bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-            marginStart = dp(12)
-            bottomMargin = dp(12)
-            horizontalBias = 0f
-        }
-
-        debugOverlay.gravity = Gravity.START
-        binding.root.addView(debugOverlay, params)
     }
 
     private fun startCamera() {
@@ -126,14 +94,12 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         }
 
         val preview = Preview.Builder()
+            .setTargetRotation(android.view.Surface.ROTATION_0)
             .build()
-            .also {
-                it.targetRotation = android.view.Surface.ROTATION_0
-                it.surfaceProvider = binding.viewFinder.surfaceProvider
-            }
+            .also { it.surfaceProvider = binding.viewFinder.surfaceProvider }
         imageCapture = ImageCapture.Builder()
+            .setTargetRotation(android.view.Surface.ROTATION_0)
             .build()
-            .also { it.targetRotation = android.view.Surface.ROTATION_0 }
 
         provider.unbindAll()
         provider.bindToLifecycle(
@@ -187,22 +153,14 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         capture.takePicture(cameraExecutor, object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
                 try {
-                    val rotationDegrees = image.imageInfo.rotationDegrees
-                    Log.d(TAG, "rotationDegrees=$rotationDegrees")
-                    val normalizedDeg = (360 - rotationDegrees) % 360
-                    Log.d(TAG, "normalizedDeg=$normalizedDeg")
-                    val rawBitmap = imageProxyToBitmap(image)
+                    val bitmap = imageProxyToBitmap(image)
                         ?: throw IOException("Failed to decode image")
-                    val normalizedBitmap = rawBitmap.rotateClockwise(normalizedDeg)
-                    if (normalizedBitmap != rawBitmap) {
-                        rawBitmap.recycle()
-                    }
-                    Log.d(TAG, "normalizedBitmap size=${normalizedBitmap.width}x${normalizedBitmap.height}")
+                    val tempFile = writeBitmapToTempFile(bitmap)
+                    bitmap.recycle()
 
                     runOnUiThread {
-                        updateDebugOverlay(rotationDegrees, normalizedDeg)
                         binding.btnShutter.isEnabled = true
-                        replacePendingBitmap(normalizedBitmap)
+                        replacePendingTempFile(tempFile)
                         showPreviewMode()
                     }
                 } catch (_: Exception) {
@@ -225,11 +183,22 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     }
 
     private fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
-        return when (image.format) {
+        val bitmap = when (image.format) {
             ImageFormat.JPEG -> jpegImageToBitmap(image)
             ImageFormat.YUV_420_888 -> yuvImageToBitmap(image)
             else -> null
+        } ?: return null
+
+        val rotation = image.imageInfo.rotationDegrees
+        Log.d(TAG, "Captured image rotationDegrees=$rotation")
+        if (rotation == 0) return bitmap
+
+        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+        val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        if (rotated != bitmap) {
+            bitmap.recycle()
         }
+        return rotated
     }
 
     private fun jpegImageToBitmap(image: ImageProxy): Bitmap? {
@@ -302,14 +271,24 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         }
     }
 
+    private fun writeBitmapToTempFile(bitmap: Bitmap): File {
+        val tempFile = File(cacheDir, "capture_tmp_${System.currentTimeMillis()}.jpg")
+        FileOutputStream(tempFile).use { output ->
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)) {
+                throw IOException("Failed to write temp bitmap")
+            }
+        }
+        return tempFile
+    }
+
     private fun showPreviewMode() {
-        val previewBitmap = pendingNormalizedBitmap ?: run {
+        val previewSource = pendingTempFile ?: run {
             Toast.makeText(this, R.string.msg_photo_save_failed, Toast.LENGTH_SHORT).show()
             return
         }
 
         Glide.with(this)
-            .load(previewBitmap)
+            .load(previewSource)
             .fitCenter()
             .into(binding.ivPreview)
 
@@ -319,16 +298,17 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     }
 
     private fun onSavePreview() {
-        val normalizedBitmap = pendingNormalizedBitmap ?: return
+        val tempFile = pendingTempFile ?: return
         binding.btnSave.isEnabled = false
-        saveFinalImage(normalizedBitmap)
+        saveFinalImage(tempFile)
     }
 
-    private fun saveFinalImage(normalizedBitmap: Bitmap) {
+    private fun saveFinalImage(tempFile: File) {
         val saveCallback = object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                 runOnUiThread {
                     binding.btnSave.isEnabled = true
+                    deleteTempFile(tempFile)
                     Toast.makeText(this@LargeScreenCameraActivity, R.string.msg_save_completed, Toast.LENGTH_SHORT).show()
                     clearPreviewMode()
                 }
@@ -343,7 +323,22 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         }
 
         cameraExecutor.execute {
-            val savedUri = saveNormalizedBitmapToMediaStore(normalizedBitmap, createPhotoFileName())
+            if (!tempFile.exists()) {
+                saveCallback.onError(
+                    ImageCaptureException(
+                        ImageCapture.ERROR_FILE_IO,
+                        "Temporary file is missing",
+                        null,
+                    ),
+                )
+                return@execute
+            }
+
+            val savedUri = MediaStoreImageSaver.saveImage(
+                context = this,
+                sourceFile = tempFile,
+                displayName = createPhotoFileName(),
+            )
             Log.d(TAG, "saveFinalImage result uri=$savedUri")
 
             if (savedUri != null) {
@@ -360,76 +355,8 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         }
     }
 
-    private fun saveNormalizedBitmapToMediaStore(bitmap: Bitmap, displayName: String): android.net.Uri? {
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            return saveNormalizedBitmapForLegacy(bitmap, displayName)
-        }
-
-        val resolver = contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/codex_app/cameraX")
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-        }
-
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            ?: return null
-
-        return try {
-            val wroteBitmap = resolver.openOutputStream(uri)?.use { output ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)
-            } ?: false
-
-            if (!wroteBitmap) {
-                throw IOException("Failed to encode normalized bitmap")
-            }
-
-            val pendingValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.IS_PENDING, 0)
-            }
-            resolver.update(uri, pendingValues, null, null)
-            uri
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to save normalized bitmap uri=$uri", e)
-            resolver.delete(uri, null, null)
-            null
-        }
-    }
-
-    private fun saveNormalizedBitmapForLegacy(bitmap: Bitmap, displayName: String): android.net.Uri? {
-        val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-        val outputDir = File(picturesDir, "codex_app/cameraX")
-        if (!outputDir.exists() && !outputDir.mkdirs()) {
-            return null
-        }
-
-        val outputFile = File(outputDir, displayName)
-        return try {
-            val wroteBitmap = FileOutputStream(outputFile).use { output ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)
-            }
-            if (!wroteBitmap) {
-                throw IOException("Failed to encode legacy normalized bitmap")
-            }
-
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DATA, outputFile.absolutePath)
-                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            }
-            contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                ?: android.net.Uri.fromFile(outputFile)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed legacy bitmap save file=${outputFile.absolutePath}", e)
-            if (outputFile.exists()) {
-                outputFile.delete()
-            }
-            null
-        }
-    }
-
     private fun onDiscardPreview() {
+        pendingTempFile?.let { deleteTempFile(it) }
         Toast.makeText(this, R.string.msg_delete_completed, Toast.LENGTH_SHORT).show()
         clearPreviewMode()
     }
@@ -443,41 +370,22 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         binding.btnShutter.isEnabled = true
         binding.btnSave.isEnabled = true
 
-        pendingNormalizedBitmap?.recycle()
-        pendingNormalizedBitmap = null
+        pendingTempFile = null
     }
 
-    private fun replacePendingBitmap(newBitmap: Bitmap) {
-        pendingNormalizedBitmap?.recycle()
-        pendingNormalizedBitmap = newBitmap
-    }
-
-    private fun updateDebugOverlay(rotationDegrees: Int, normalizedDeg: Int) {
-        debugOverlay.text = "rotationDegrees=$rotationDegrees\nnormalizedDeg=$normalizedDeg"
-    }
-
-    private fun Bitmap.rotateClockwise(degrees: Int): Bitmap {
-        if (degrees == 0) return this
-        val matrix = Matrix().apply {
-            postRotate(degrees.toFloat())
+    private fun replacePendingTempFile(newFile: File) {
+        pendingTempFile?.let { oldFile ->
+            if (oldFile.absolutePath != newFile.absolutePath) {
+                deleteTempFile(oldFile)
+            }
         }
-        return Bitmap.createBitmap(
-            this,
-            0,
-            0,
-            width,
-            height,
-            matrix,
-            true,
-        )
+        pendingTempFile = newFile
     }
 
-    private fun dp(value: Int): Int {
-        return TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            value.toFloat(),
-            resources.displayMetrics,
-        ).toInt()
+    private fun deleteTempFile(file: File) {
+        if (file.exists()) {
+            file.delete()
+        }
     }
 
     private fun createPhotoFileName(): String {
@@ -498,8 +406,8 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     override fun onDestroy() {
         imageCapture = null
         cameraProvider?.unbindAll()
-        pendingNormalizedBitmap?.recycle()
-        pendingNormalizedBitmap = null
+        pendingTempFile?.let { deleteTempFile(it) }
+        pendingTempFile = null
         if (::cameraExecutor.isInitialized) {
             cameraExecutor.shutdown()
         }

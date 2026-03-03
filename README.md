@@ -171,16 +171,6 @@
 
 ---
 
-
-### PR-19) LargeScreenCameraActivity 최종 저장 회전 정규화
-- [x] `OnImageCapturedCallback`에서 `rotationDegrees`를 읽고 Bitmap 변환 후 `Matrix.postRotate()`로 1회만 회전 적용
-- [x] temp 파일 저장 시 회전이 반영된 비트맵을 저장하고 중복 회전 로직 제거
-- [x] MediaStore 최종 저장은 temp 파일 바이트를 그대로 복사 (추가 회전/EXIF 수정 없음)
-- [x] 회전 로그 추가: `rotationDegrees applied = ...`
-- [x] Saved image now matches preview orientation exactly (single rotation application).
-
----
-
 ## 2. UI/회전 대응 규칙(결정사항)
 ### 권장안: `layout` / `layout-land` 2벌로 간다
 - 세로: 상단바(좌 플래시 / 우 닫기), 하단 중앙 촬영
@@ -221,39 +211,3 @@
 - 플래시/닫기 동작 정상
 
 ---
-
-### PR-20) LargeScreenCameraActivity 저장 이미지 0° 정규화 + EXIF 중복 회전 방지
-- [x] `OnImageCapturedCallback`에서 `rotationDegrees`를 읽고, ImageProxy -> Bitmap 변환은 무회전으로 처리
-- [x] `Matrix.postRotate(rotationDegrees)`로 픽셀 자체를 1회 정규화하여 upright bitmap 생성
-- [x] 정규화된 bitmap을 인앱 미리보기와 최종 저장에 동일하게 사용
-- [x] 최종 저장 시 기존 JPEG/EXIF 복사 없이 정규화 bitmap을 JPEG로 압축하여 MediaStore(OutputStream)에 직접 기록
-- [x] Android 9 이하도 정규화 bitmap을 신규 JPEG 파일로 저장 후 스캔
-- Saved photos are now normalized to 0° upright orientation regardless of device rotation (90/180/270).
-
-## PR-20: Save Image Orientation Normalization
-- [x] Fixed saved image rotation issue in `LargeScreenCameraActivity`.
-- [x] Final saved images are normalized to upright 0° orientation.
-- [x] Device rotation (90/180/270) no longer affects gallery display.
-- [x] Rotation is applied exactly once during normalization.
-- [x] EXIF orientation is not relied upon.
-
-Description:
-- `rotationDegrees` from CameraX capture metadata is applied exactly once to bitmap pixels during normalization.
-- `ImageProxy -> Bitmap` conversion path does not rotate.
-- Normalized bitmap is used for both in-app preview and final MediaStore save.
-- Final save uses bitmap re-encoding to JPEG output stream, without EXIF orientation dependency.
-
----
-
-### PR-22) Orientation Normalization Fix (always upright)
-- [x] Final save now uses bitmap re-encoding only (no temp file byte copy).
-- [x] Added capture logs for `rotationDegrees` and applied inverse normalization rule.
-- [x] Applied normalization with inverse rule: `normalizedDeg = (360 - rotationDegrees) % 360`.
-- [x] Rotation is applied exactly once (ImageProxy decode path stays unrotated).
-- [x] Preview (`ivPreview`) and final saved output both use the same normalized bitmap.
-- [x] Added temporary debug overlay (bottom-left) showing `rotationDegrees` / `normalizedDeg`.
-
-PR-22 Notes:
-- Final save uses bitmap re-encoding (no temp file copy).
-- Normalization uses inverse `rotationDegrees` to guarantee upright gallery display.
-- Preview and saved output now match.
