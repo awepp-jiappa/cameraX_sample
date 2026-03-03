@@ -1,7 +1,6 @@
 package com.example.cameraxsample.ui.camera
 
 import android.Manifest
-import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -9,12 +8,9 @@ import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
-import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.content.res.Configuration
-import android.provider.MediaStore
 import android.util.Log
 import android.view.View
 import android.widget.Toast
@@ -29,6 +25,7 @@ import androidx.core.content.ContextCompat
 import com.bumptech.glide.Glide
 import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityLargeScreenCameraBinding
+import com.example.cameraxsample.storage.MediaStoreImageSaver
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -337,11 +334,12 @@ class LargeScreenCameraActivity : AppCompatActivity() {
                 return@execute
             }
 
-            val savedUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                saveTempFileToMediaStore(tempFile)
-            } else {
-                saveTempFileToLegacyDownloads(tempFile)
-            }
+            val savedUri = MediaStoreImageSaver.saveImage(
+                context = this,
+                sourceFile = tempFile,
+                displayName = createPhotoFileName(),
+            )
+            Log.d(TAG, "saveFinalImage result uri=$savedUri")
 
             if (savedUri != null) {
                 saveCallback.onImageSaved(ImageCapture.OutputFileResults(savedUri))
@@ -354,51 +352,6 @@ class LargeScreenCameraActivity : AppCompatActivity() {
                     ),
                 )
             }
-        }
-    }
-
-    private fun saveTempFileToMediaStore(tempFile: File): android.net.Uri? {
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, createPhotoFileName())
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/codex_app/cameraX")
-        }
-        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-            ?: return null
-
-        return try {
-            contentResolver.openOutputStream(uri)?.use { output ->
-                tempFile.inputStream().use { input -> input.copyTo(output) }
-            } ?: throw IOException("Failed to open output stream")
-            uri
-        } catch (_: Exception) {
-            contentResolver.delete(uri, null, null)
-            null
-        }
-    }
-
-    private fun saveTempFileToLegacyDownloads(tempFile: File): android.net.Uri? {
-        if (!hasLegacyWritePermission()) {
-            runOnUiThread {
-                Toast.makeText(this, R.string.required_permissions_needed, Toast.LENGTH_SHORT).show()
-            }
-            return null
-        }
-
-        val destination = createLegacyOutputFile()
-        return try {
-            tempFile.inputStream().use { input ->
-                destination.outputStream().use { output -> input.copyTo(output) }
-            }
-            MediaScannerConnection.scanFile(
-                this,
-                arrayOf(destination.absolutePath),
-                arrayOf("image/jpeg"),
-                null,
-            )
-            android.net.Uri.fromFile(destination)
-        } catch (_: Exception) {
-            null
         }
     }
 
@@ -433,15 +386,6 @@ class LargeScreenCameraActivity : AppCompatActivity() {
         if (file.exists()) {
             file.delete()
         }
-    }
-
-    private fun createLegacyOutputFile(): File {
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val targetDirectory = File(downloadsDir, "codex_app/cameraX")
-        if (!targetDirectory.exists()) {
-            targetDirectory.mkdirs()
-        }
-        return File(targetDirectory, createPhotoFileName())
     }
 
     private fun createPhotoFileName(): String {
