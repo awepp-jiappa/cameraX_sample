@@ -9,12 +9,16 @@ import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
+import android.os.Environment
 import android.os.Build
 import android.os.Bundle
 import android.content.res.Configuration
 import android.provider.MediaStore
 import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.View
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
@@ -28,6 +32,8 @@ import com.bumptech.glide.Glide
 import com.example.cameraxsample.R
 import com.example.cameraxsample.databinding.ActivityLargeScreenCameraBinding
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -46,6 +52,7 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     private var imageCapture: ImageCapture? = null
     private var cameraProvider: ProcessCameraProvider? = null
     private var pendingNormalizedBitmap: Bitmap? = null
+    private lateinit var debugOverlay: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,10 +71,36 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     }
 
     private fun setupUi() {
+        setupDebugOverlay()
         binding.btnClose.setOnClickListener { finish() }
         binding.btnShutter.setOnClickListener { takePhoto() }
         binding.btnSave.setOnClickListener { onSavePreview() }
         binding.btnDiscard.setOnClickListener { onDiscardPreview() }
+    }
+
+    private fun setupDebugOverlay() {
+        debugOverlay = TextView(this).apply {
+            id = View.generateViewId()
+            setTextColor(android.graphics.Color.WHITE)
+            setBackgroundColor(0x66000000)
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            textSize = 12f
+            text = "rotationDegrees=-\nnormalizedDeg=-"
+        }
+
+        val params = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT,
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+            bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+            marginStart = dp(12)
+            bottomMargin = dp(12)
+            horizontalBias = 0f
+        }
+
+        debugOverlay.gravity = Gravity.START
+        binding.root.addView(debugOverlay, params)
     }
 
     private fun startCamera() {
@@ -156,31 +189,18 @@ class LargeScreenCameraActivity : AppCompatActivity() {
                 try {
                     val rotationDegrees = image.imageInfo.rotationDegrees
                     Log.d(TAG, "rotationDegrees=$rotationDegrees")
+                    val normalizedDeg = (360 - rotationDegrees) % 360
+                    Log.d(TAG, "normalizedDeg=$normalizedDeg")
                     val rawBitmap = imageProxyToBitmap(image)
                         ?: throw IOException("Failed to decode image")
-                    val normalizedBitmap =
-                        if (rotationDegrees != 0) {
-                            val matrix = Matrix().apply {
-                                postRotate(rotationDegrees.toFloat())
-                            }
-                            Bitmap.createBitmap(
-                                rawBitmap,
-                                0,
-                                0,
-                                rawBitmap.width,
-                                rawBitmap.height,
-                                matrix,
-                                true,
-                            )
-                        } else {
-                            rawBitmap
-                        }
+                    val normalizedBitmap = rawBitmap.rotateClockwise(normalizedDeg)
                     if (normalizedBitmap != rawBitmap) {
                         rawBitmap.recycle()
                     }
                     Log.d(TAG, "normalizedBitmap size=${normalizedBitmap.width}x${normalizedBitmap.height}")
 
                     runOnUiThread {
+                        updateDebugOverlay(rotationDegrees, normalizedDeg)
                         binding.btnShutter.isEnabled = true
                         replacePendingBitmap(normalizedBitmap)
                         showPreviewMode()
@@ -341,14 +361,16 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     }
 
     private fun saveNormalizedBitmapToMediaStore(bitmap: Bitmap, displayName: String): android.net.Uri? {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            return saveNormalizedBitmapForLegacy(bitmap, displayName)
+        }
+
         val resolver = contentResolver
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/codex_app/cameraX")
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/codex_app/cameraX")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
 
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
@@ -363,16 +385,46 @@ class LargeScreenCameraActivity : AppCompatActivity() {
                 throw IOException("Failed to encode normalized bitmap")
             }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val pendingValues = ContentValues().apply {
-                    put(MediaStore.MediaColumns.IS_PENDING, 0)
-                }
-                resolver.update(uri, pendingValues, null, null)
+            val pendingValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
             }
+            resolver.update(uri, pendingValues, null, null)
             uri
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save normalized bitmap uri=$uri", e)
             resolver.delete(uri, null, null)
+            null
+        }
+    }
+
+    private fun saveNormalizedBitmapForLegacy(bitmap: Bitmap, displayName: String): android.net.Uri? {
+        val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        val outputDir = File(picturesDir, "codex_app/cameraX")
+        if (!outputDir.exists() && !outputDir.mkdirs()) {
+            return null
+        }
+
+        val outputFile = File(outputDir, displayName)
+        return try {
+            val wroteBitmap = FileOutputStream(outputFile).use { output ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)
+            }
+            if (!wroteBitmap) {
+                throw IOException("Failed to encode legacy normalized bitmap")
+            }
+
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DATA, outputFile.absolutePath)
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            }
+            contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: android.net.Uri.fromFile(outputFile)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed legacy bitmap save file=${outputFile.absolutePath}", e)
+            if (outputFile.exists()) {
+                outputFile.delete()
+            }
             null
         }
     }
@@ -398,6 +450,34 @@ class LargeScreenCameraActivity : AppCompatActivity() {
     private fun replacePendingBitmap(newBitmap: Bitmap) {
         pendingNormalizedBitmap?.recycle()
         pendingNormalizedBitmap = newBitmap
+    }
+
+    private fun updateDebugOverlay(rotationDegrees: Int, normalizedDeg: Int) {
+        debugOverlay.text = "rotationDegrees=$rotationDegrees\nnormalizedDeg=$normalizedDeg"
+    }
+
+    private fun Bitmap.rotateClockwise(degrees: Int): Bitmap {
+        if (degrees == 0) return this
+        val matrix = Matrix().apply {
+            postRotate(degrees.toFloat())
+        }
+        return Bitmap.createBitmap(
+            this,
+            0,
+            0,
+            width,
+            height,
+            matrix,
+            true,
+        )
+    }
+
+    private fun dp(value: Int): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            value.toFloat(),
+            resources.displayMetrics,
+        ).toInt()
     }
 
     private fun createPhotoFileName(): String {
