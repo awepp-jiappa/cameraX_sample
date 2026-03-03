@@ -162,6 +162,13 @@
 - [x] Added multi-window / split-screen safe rebind logic.
 - [x] LargeScreenCameraActivity remains portrait-locked but now handles window resizing safely.
 
+
+
+### PR-18) MediaStore 저장 로직 리팩터링 (Scoped Storage + Android 13+ 호환)
+- [x] Refactored MediaStore save logic.
+- [x] Standardized image save path to Pictures/codex_app/cameraX.
+- [x] Ensured Android 10+ Scoped Storage and Android 13+ compatibility.
+
 ---
 
 ## 2. UI/회전 대응 규칙(결정사항)
